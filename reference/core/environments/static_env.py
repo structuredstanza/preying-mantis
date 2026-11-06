@@ -268,9 +268,6 @@ class StaticOnlyEnvironment(BaseEnvironment):
                     results.append(rel)
         return sorted(results)
 
-    async def apply_patch(self, diff: str) -> str:
-        return "SANDBOX-UNAVAILABLE: static-only sandbox; no dynamic patches are applied."
-
     async def preflight(self) -> None:
         pass
 

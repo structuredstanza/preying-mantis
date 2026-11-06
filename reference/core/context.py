@@ -54,11 +54,9 @@ class RunContext:
     read_file_counts: dict[str, int] = field(default_factory=dict)
     # Reached-sink evidence per FINDING, keyed by the finding's database id as
     # a string. `sandbox_executed` above says "some PoC in this campaign
-    # reached a sink"; this says which. Each entry: {"reproduced": bool (a
-    # reproducer-stage run of this finding's PoC had evidence), "reattacked":
-    # bool (a patcher-stage run was made), "reattack_present": bool (the
-    # last re-attack still reached the sink), "sink_symbol": str, "reason":
-    # str (the last evidence_reason)}. Written only by
+    # reached a sink"; this says which. Each entry: {"reproduced": bool (a run
+    # of this finding's PoC had reached-sink evidence), "sink_symbol": str,
+    # "reason": str (the last evidence_reason)}. Written only by
     # tools.sandbox_tools.run_sandbox_with_evidence; read by the completion
     # stamp, which upgrades only the findings named here. Empty means no
     # evidence was attributed to any finding.

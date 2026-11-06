@@ -708,16 +708,21 @@ class TestSuccessOnlyCoverageStamps(unittest.TestCase):
         self.assertEqual(len(calls), 1, "Exactly one stamp per completion.")
         self.assertEqual(_status_of(self.db, "app.py"), "static_confirmed")
 
-    def test_dynamic_status_without_sandbox_executed_is_skipped(self):
+    def test_dynamic_status_without_sandbox_executed_is_refused(self):
         """INV-1: a node that never reached a sandbox cannot claim dynamic
         proof. The ctx.sandbox_executed gate main.py applied at entry time
-        must be preserved verbatim in the completion callback."""
+        must be preserved verbatim in the completion callback.
+
+        The stage still read this code, so the finding keeps the static tier
+        rather than falling back to `reported` -- but it never gains dynamic
+        proof it did not earn.
+        """
         _seed_finding(self.db, "app.py", run_id="r_p4")
         self._set_ctx(sandbox_executed=False)
-        cb = gl._make_completion_stamp_callback("patcher", "dynamic_confirmed")
+        cb = gl._make_completion_stamp_callback("reproducer", "dynamic_confirmed")
 
         self.assertIsNone(cb(callback_context=object()))
-        self.assertEqual(_status_of(self.db, "app.py"), "reported",
+        self.assertEqual(_status_of(self.db, "app.py"), "static_confirmed",
                          "dynamic_confirmed was stamped without any "
                          "reached-sink evidence (INV-1 violation).")
 
@@ -725,7 +730,7 @@ class TestSuccessOnlyCoverageStamps(unittest.TestCase):
         """Positive control for the INV-1 gate."""
         _seed_finding(self.db, "app.py", run_id="r_p4")
         self._set_ctx(sandbox_executed=True)
-        cb = gl._make_completion_stamp_callback("patcher", "dynamic_confirmed")
+        cb = gl._make_completion_stamp_callback("reproducer", "dynamic_confirmed")
         cb(callback_context=object())
         self.assertEqual(_status_of(self.db, "app.py"), "dynamic_confirmed")
 
@@ -811,8 +816,8 @@ class TestSuccessOnlyCoverageStamps(unittest.TestCase):
 
     def test_stamp_lives_in_after_agent_callback_not_on_entry(self):
         """Structural half of the crash guarantee, against the shipped
-        workflow: exactly the stamped nodes (reproducer: static_confirmed,
-        patcher: dynamic_confirmed) carry the completion callback; every
+        workflow: exactly the stamped node (reproducer: dynamic_confirmed)
+        carries the completion callback; every
         other agent node carries none; and the entry-stamp map exported to
         main.py is empty (asserted above). Together with the behavioral test
         this pins that no stamp can fire on an on-entry path."""
@@ -835,7 +840,7 @@ class TestSuccessOnlyCoverageStamps(unittest.TestCase):
         }
         self.assertEqual(
             declared_stamps,
-            {"reproducer": "static_confirmed", "patcher": "dynamic_confirmed"},
+            {"reproducer": "dynamic_confirmed"},
             "The shipped workflow's stamped-node set changed; update this "
             "test's expectations deliberately, not accidentally.",
         )

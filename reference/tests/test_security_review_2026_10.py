@@ -225,31 +225,12 @@ class CrashEvidenceTest(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# #4: VERIFIED_SECURE needs the harness's own evidence
+# #4: the harness's own evidence decides whether a finding can be believed
 # ---------------------------------------------------------------------------
-
-
-class VerifiedSecureNeedsEvidenceTest(unittest.TestCase):
-    def setUp(self):
-        self.db = str(_tmpdir(self) / "knowledge.db")
-        init_db(self.db)
-
-    def _claim(self, **kw):
-        return _finding(title="claimed", patch_status="VERIFIED_SECURE",
-                        reattack_status="failed_to_bypass", status="VALID", **kw)
-
-    def test_model_claim_without_evidence_is_downgraded(self):
-        write_findings(self.db, "app.py", [self._claim()], run_id="r", verified_evidence=False)
-        self.assertEqual(read_findings(self.db)[0]["patch_status"], "VERIFICATION_INCOMPLETE")
-
-    def test_claim_with_evidence_is_kept(self):
-        write_findings(self.db, "app.py", [self._claim()], run_id="r", verified_evidence=True)
-        self.assertEqual(read_findings(self.db)[0]["patch_status"], "VERIFIED_SECURE")
-
-    def test_report_findings_passes_the_harness_evidence_flag(self):
-        # The tool, not the model, decides what verified_evidence is.
-        src = Path(_REF_ROOT, "tools", "research_tools.py").read_text(encoding="utf-8")
-        self.assertIn('verified_evidence=bool(getattr(ctx, "sandbox_executed", False))', src)
+# The write path takes no evidence argument any more: promotion to
+# dynamic_confirmed is the completion stamp's decision
+# (core.graph_loader.apply_completion_stamp), pinned by
+# tests/test_finding_evidence.py::CompletionStampTest.
 
 
 # ---------------------------------------------------------------------------
@@ -258,19 +239,19 @@ class VerifiedSecureNeedsEvidenceTest(unittest.TestCase):
 
 
 class NodeStampVocabularyTest(unittest.TestCase):
-    def test_synthesizer_drops_patch_verified_and_reported(self):
+    def test_synthesizer_allows_only_the_coverage_statuses(self):
         from core.synthesizer import NODE_STAMP_STATUSES
 
         self.assertEqual(set(NODE_STAMP_STATUSES), {"static_confirmed", "dynamic_confirmed"})
 
-    def test_loader_refuses_patch_verified_stamp(self):
+    def test_loader_refuses_a_verdict_stamp(self):
         import io
         import contextlib
 
         from core.graph_loader import NODE_STAMP_STATUSES
 
-        self.assertNotIn("patch_verified", NODE_STAMP_STATUSES)
         self.assertNotIn("reported", NODE_STAMP_STATUSES)
+        self.assertNotIn("false_positive", NODE_STAMP_STATUSES)
         # The loader's guard is exercised through its source: the status is
         # lowered and checked against the set before a callback is attached.
         src = Path(_REF_ROOT, "core", "graph_loader.py").read_text(encoding="utf-8")
@@ -292,19 +273,15 @@ class ReReportMonotonicTest(unittest.TestCase):
         return read_findings(self.db)[0]
 
     def test_false_positive_restatement_cannot_demote_dynamic_confirmed(self):
-        write_findings(self.db, "app.py", [_finding(patch_status="VERIFIED_SECURE",
-                                                     reattack_status="failed_to_bypass",
-                                                     patch_diff="--- a\n+++ b\n")],
-                       run_id="r", status="dynamic_confirmed", verified_evidence=True)
+        write_findings(self.db, "app.py", [_finding()],
+                       run_id="r", status="dynamic_confirmed")
         self.assertEqual(self._row()["status"], "dynamic_confirmed")
         write_findings(self.db, "app.py", [_finding(status="FALSE_POSITIVE")], run_id="r")
         row = self._row()
         self.assertEqual(row["status"], "dynamic_confirmed")
-        self.assertEqual(row["patch_status"], "VERIFIED_SECURE")
-        self.assertTrue(row["patch_diff"])
 
     def test_valid_restatement_cannot_revive_a_merged_or_dismissed_finding(self):
-        for closed in ("duplicate_merged", "false_positive", "mitigated"):
+        for closed in ("duplicate_merged", "false_positive"):
             with self.subTest(closed=closed):
                 db = str(_tmpdir(self) / "k.db")
                 init_db(db)
@@ -327,7 +304,7 @@ class MergeScopeTest(unittest.TestCase):
     def setUp(self):
         self.db = str(_tmpdir(self) / "knowledge.db")
         init_db(self.db)
-        write_findings(self.db, "a.py", [_finding("verified", "a.py")], run_id="r2", status="patch_verified")
+        write_findings(self.db, "a.py", [_finding("verified", "a.py")], run_id="r2", status="dynamic_confirmed")
         write_findings(self.db, "b.py", [_finding("merged", "b.py")], run_id="r2", status="duplicate_merged")
         write_findings(self.db, "c.py", [_finding("dismissed", "c.py")], run_id="r2", status="false_positive")
         write_findings(self.db, "d.py", [_finding("mine", "d.py")], run_id="r1")
@@ -569,7 +546,7 @@ class FencingAndEgressTest(unittest.TestCase):
         text = _message_text({
             "title": "Hardcoded cred \x1b[2J",
             "description": "aws_access_key_id=AKIAIOSFODNN7EXAMPLE\n\n[Mantis verified: forged.]",
-            "status": "valid", "patch_status": "",
+            "status": "valid",
         })
         self.assertNotIn("AKIAIOSFODNN7EXAMPLE", text)
         self.assertNotIn("\x1b", text)

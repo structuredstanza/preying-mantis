@@ -196,7 +196,7 @@ class ReflectionParsingTest(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(parse_reflection_blocks(text), {"experiences": [], "no_entry": True})
         # Prose that merely contains the word is not the token.
-        self.assertEqual(parse_reflection_blocks("NO_ENTRY for the patcher stage"), {"experiences": []})
+        self.assertEqual(parse_reflection_blocks("NO_ENTRY for the reviewer stage"), {"experiences": []})
         self.assertNotIn("no_entry", parse_reflection_blocks("nothing here"))
         self.assertNotIn("no_entry", parse_reflection_blocks(self.SAMPLE))
         # A lesson alongside a declaration that there is none is a contradiction;
@@ -252,7 +252,7 @@ class ReflectionParsingTest(unittest.TestCase):
                 record_reflection_output(db, "run-1", _experience(cue, confidence))
                 _set_timestamp(db, cue, when)
             # A later run's lesson for another stage must not leak into this one.
-            record_reflection_output(db, "run-2", _experience("other-stage", "high", stage="patcher"))
+            record_reflection_output(db, "run-2", _experience("other-stage", "high", stage="reproducer"))
 
             items = recall_for_stage(db, "reviewer", include_general=False)
             cues = [item["learning"].split(":")[0].removeprefix("When ") for item in items]
@@ -305,9 +305,9 @@ class AppendedInstructionCapTest(unittest.TestCase):
         for i in range(lessons):
             confidence = "high" if i < 5 else ("medium" if i < 20 else "low")
             record_reflection_output(
-                db, f"run-{i}", _experience(f"cue{i:02d}-{'x' * cue_width}", confidence, stage="patcher")
+                db, f"run-{i}", _experience(f"cue{i:02d}-{'x' * cue_width}", confidence, stage="reproducer")
             )
-        return db, render_stage_learnings_for_agent(db, "patcher", max_learnings=lessons)
+        return db, render_stage_learnings_for_agent(db, "reproducer", max_learnings=lessons)
 
     def test_bound_keeps_fence_closed_and_announces_the_cut(self):
         from core.graph_loader import MAX_APPENDED_INSTRUCTION_CHARS, bound_appended_instruction
@@ -335,7 +335,7 @@ class AppendedInstructionCapTest(unittest.TestCase):
         self.assertEqual(omitted, len(block) - len(bounded.rsplit("\n", 1)[0]))
 
         # Under the cap nothing changes, and the object is passed through.
-        short = render_stage_learnings_for_agent(self._long_block(lessons=2)[0], "patcher")
+        short = render_stage_learnings_for_agent(self._long_block(lessons=2)[0], "reproducer")
         self.assertIs(bound_appended_instruction(short)[0], short)
         self.assertEqual(bound_appended_instruction(short)[1], 0)
         self.assertEqual(bound_appended_instruction("")[1], 0)
@@ -359,7 +359,7 @@ class AppendedInstructionCapTest(unittest.TestCase):
         tok = current_run_context.set(ctx)
         try:
             class _Cfg:
-                system_instruction = "Base patcher prompt."
+                system_instruction = "Base reproducer prompt."
 
             class _Req:
                 def __init__(self):
@@ -370,7 +370,7 @@ class AppendedInstructionCapTest(unittest.TestCase):
                     self.appended.extend(items)
                     self.config.system_instruction += "\n\n" + "\n\n".join(items)
 
-            before_model = _make_stage_experience_before_model_callback("patcher")
+            before_model = _make_stage_experience_before_model_callback("reproducer")
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
                 req1, req2 = _Req(), _Req()
@@ -379,11 +379,11 @@ class AppendedInstructionCapTest(unittest.TestCase):
             self.assertEqual(len(req1.appended), 1)
             appended = req1.appended[0]
             self.assertLessEqual(len(appended), MAX_APPENDED_INSTRUCTION_CHARS)
-            self.assertIn("[STAGE EXPERIENCE - PATCHER]", appended)
+            self.assertIn("[STAGE EXPERIENCE - REPRODUCER]", appended)
             self.assertIn("[STAGE EXPERIENCE truncated:", appended)
             self.assertEqual(req2.appended, [appended])
             # Logged once per node, not once per model turn.
-            self.assertEqual(err.getvalue().count("stage experience for 'patcher'"), 1)
+            self.assertEqual(err.getvalue().count("stage experience for 'reproducer'"), 1)
             self.assertIn(str(MAX_APPENDED_INSTRUCTION_CHARS), err.getvalue())
         finally:
             current_run_context.reset(tok)
@@ -499,7 +499,7 @@ class StageModelCallbackTest(unittest.TestCase):
                 rendered = render_stage_learnings_for_agent(db, "reviewer")
                 self.assertIn("[STAGE EXPERIENCE - REVIEWER]", rendered)
                 self.assertIn("get_function_boundary", rendered)
-                self.assertEqual(render_stage_learnings_for_agent(db, "patcher"), "")
+                self.assertEqual(render_stage_learnings_for_agent(db, "reproducer"), "")
 
                 class _Cfg:
                     system_instruction = "Base reviewer prompt."

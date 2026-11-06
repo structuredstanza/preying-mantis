@@ -41,10 +41,8 @@ from core.sandbox import SANDBOXES
 from core.llm_gateway import UNTRUSTED_CODE_AUDIT_GUARD
 
 # What a node may stamp on the findings in its scope when it completes. A
-# strict subset of the status vocabulary: `patch_verified` is the harness's
-# highest-assurance word, earned only through the re-attack flow, and the
-# MCP change gate treats it as closed -- a workflow that stamped it would
-# silence every finding in the campaign; `reported` would reopen dismissals.
+# strict subset of the status vocabulary: `reported` would reopen dismissals,
+# so a node may only promote.
 # Enforced here, where the stamp callback is attached, so a hand-written
 # workflow, a synthesized graph, and a persisted recipe all meet the same gate.
 NODE_STAMP_STATUSES = frozenset({"static_confirmed", "dynamic_confirmed"})
@@ -395,7 +393,7 @@ def _active_campaign_finding_ids(db_path: str, target_file: str, run_id: str) ->
     """Ids of the campaign's findings that a stamp could still move."""
     from core.database import read_findings
 
-    closed = {"false_positive", "duplicate_merged", "non_viable", "sample_or_test", "mitigated", "patch_verified"}
+    closed = {"false_positive", "duplicate_merged", "non_viable", "sample_or_test"}
     try:
         rows = read_findings(db_path, run_id=run_id, scope_path=target_file or None, campaign=target_file or None)
     except Exception:
@@ -411,31 +409,32 @@ def stamp_finding_ids(rc, new_status: str) -> Optional[list[int]]:
     reviewed everything in scope). A list: only those ids. An empty list:
     nothing earned it.
 
-    The dynamic statuses are earned per finding, by that finding's own PoC
+    The dynamic status is earned per finding, by that finding's own PoC
     (RunContext.finding_evidence, written by run_sandbox_with_evidence). The
     stamp used to read one campaign-wide bit, `sandbox_executed`, so in a
     whole-tree run one reached sink marked every finding dynamically
     confirmed -- a reader of the report could not tell the fifteen that were
-    reproduced from the one that was not. With evidence attributed to
-    findings, only those are stamped. Evidence that reached a sink but named
-    no finding (a PoC run without finding_id or a sentinel_<id> path) is
-    attributed only when the campaign has exactly one open finding, where it
-    cannot mean anything else; otherwise it stamps nothing, and the note the
-    caller prints says so.
+    reproduced from the one that was not.
+
+    An unattributed verdict -- a PoC run without finding_id or a
+    sentinel_<finding_id> path -- is attributed only when the campaign has
+    exactly one open finding, where it cannot mean anything else; otherwise it
+    stamps nothing and the note the caller prints says so. `sandbox_executed`
+    is set only when a PoC produced evidence, so it means a sink was reached,
+    not merely that a command ran.
     """
     status = str(new_status or "").lower().strip()
-    if status not in ("dynamic_confirmed", "patch_verified"):
+    if status != "dynamic_confirmed":
         return None
     evidence = dict(getattr(rc, "finding_evidence", None) or {})
-    if status == "dynamic_confirmed":
-        earned = [int(k) for k, v in evidence.items() if isinstance(v, dict) and v.get("reproduced")]
-    else:
-        earned = [int(k) for k, v in evidence.items()
-                  if isinstance(v, dict) and v.get("reproduced") and v.get("reattacked")
-                  and not v.get("reattack_present")]
+    earned = [int(k) for k, v in evidence.items() if isinstance(v, dict) and v.get("reproduced")]
     if earned:
         return sorted(set(earned))
-    if status == "dynamic_confirmed" and getattr(rc, "sandbox_executed", False):
+    if getattr(rc, "sandbox_executed", False):
+        # `sandbox_executed` is set only when a PoC produced evidence
+        # (sandbox_tools), so this means a sink was reached but the run did not
+        # say which finding it was about. With exactly one open finding that
+        # verdict cannot mean anything else.
         open_ids = _active_campaign_finding_ids(rc.db_path, rc.target_file, rc.run_id)
         if len(open_ids) == 1:
             return open_ids
@@ -452,7 +451,7 @@ def apply_completion_stamp(rc, new_status: str, node_id: str = "") -> Optional[l
     status = str(new_status or "").lower().strip()
     if rc is None or not rc.db_path or not rc.run_id or not rc.target_file:
         return []
-    if status in ("dynamic_confirmed", "patch_verified") and not getattr(rc, "sandbox_executed", False):
+    if status == "dynamic_confirmed" and not getattr(rc, "sandbox_executed", False):
         return []
     ids = stamp_finding_ids(rc, status)
     try:
@@ -462,13 +461,19 @@ def apply_completion_stamp(rc, new_status: str, node_id: str = "") -> Optional[l
             if ids:
                 update_status(rc.db_path, rc.target_file, rc.run_id, status, finding_ids=ids,
                               campaign=rc.target_file)
-            if status in ("dynamic_confirmed", "patch_verified"):
+            if status == "dynamic_confirmed":
                 left = [i for i in _active_campaign_finding_ids(rc.db_path, rc.target_file, rc.run_id)
                         if i not in set(ids)]
+                if left:
+                    # The reproducer tried these and no PoC reached a sink. They
+                    # keep the tier the review earned: statically confirmed, not
+                    # reported, and not dynamically proven.
+                    update_status(rc.db_path, rc.target_file, rc.run_id, "static_confirmed",
+                                  finding_ids=left, campaign=rc.target_file)
                 tag = f"[{node_id}] " if node_id else ""
                 shown = ", ".join(str(i) for i in ids) if ids else "none"
                 print(f"{tag}{status}: finding(s) {shown} by their own reached-sink evidence; "
-                      f"{len(left)} other(s) keep their earlier status"
+                      f"{len(left)} other(s) statically confirmed"
                       + (" (evidence was not attributed to a finding: pass finding_id or a "
                          "sentinel_<finding_id> path)" if not ids else ""),
                       file=sys.stderr)
@@ -493,13 +498,12 @@ def _make_completion_stamp_callback(node_id: str, on_enter_status: str):
     converts it from "the node was entered" to "the node actually finished".
 
     The two guards main.py applied at entry time are preserved verbatim:
-    dynamic statuses (`dynamic_confirmed`, `patch_verified`) still require
-    ctx.sandbox_executed -- a node that never reached a sandbox cannot claim
-    dynamic proof, INV-1 -- and persistence stays best-effort: a DB hiccup
-    must not kill the campaign. Statuses are lowercase; update_status
-    enforces the vocabulary and its own monotonic terminal clauses. The
-    dynamic statuses are then written per finding (apply_completion_stamp):
-    only findings whose own PoC reached a sink.
+    a dynamic status still requires ctx.sandbox_executed -- a node that never
+    reached a sandbox cannot claim dynamic proof, INV-1 -- and persistence
+    stays best-effort: a DB hiccup must not kill the campaign. Statuses are
+    lowercase; update_status enforces the vocabulary and its own monotonic
+    terminal clauses. The dynamic status is then written per finding
+    (apply_completion_stamp): only findings whose own PoC reached a sink.
     """
     new_status = str(on_enter_status).lower().strip()
 
@@ -516,7 +520,13 @@ def _make_completion_stamp_callback(node_id: str, on_enter_status: str):
             rc = current_run_context.get()
             if rc is None or not rc.db_path or not rc.run_id or not rc.target_file:
                 return None
-            if new_status in ("dynamic_confirmed", "patch_verified") and not rc.sandbox_executed:
+            if new_status == "dynamic_confirmed" and not rc.sandbox_executed:
+                # The stage finished but no PoC ran, so nothing earned dynamic
+                # proof. It still reviewed these findings by reading the code,
+                # and that is what `static_confirmed` means: without this, a
+                # static-only run leaves everything at `reported` and the
+                # report cannot tell a reviewed finding from an untouched one.
+                apply_completion_stamp(rc, "static_confirmed", node_id)
                 return None
             apply_completion_stamp(rc, new_status, node_id)
         except Exception as exc:
@@ -1615,7 +1625,7 @@ def _make_fork_before_model_callback(node_id: str, parent_id: str):
     predecessor's reading of the code -- the researcher re-opening what
     the planner just read, the reproducer re-walking the path to the sink
     -- continues from it instead. Not for the stages whose value is
-    independence (reviewer, critic, calibrator, the patcher's re-attack):
+    independence (reviewer, critic, calibrator, the re-attack):
     a judge forked from the stage it judges inherits that stage's
     confidence. Whether a fork helps or harms is a measurement, per edge
     and per model, which is why it is a node knob (`fork_from`) and not a
@@ -1907,7 +1917,7 @@ MAX_CAMPAIGN_CONTEXT_CHARS = 8000
 #: file list, the prior-findings brief and the PoC re-run note together.
 MAX_CAMPAIGN_DIRECTIVE_CHARS = 12000
 #: The stages that decide where to look. Matched by node id prefix, so
-#: `researcher_2` in a parallel archetype counts. The reproducer, patcher,
+#: `researcher_2` in a parallel archetype counts. The reproducer,
 #: calibrator, reflector and reporter work from this run's findings through
 #: tools, and earlier runs' findings in their instructions would be a way
 #: for history to leak into this run's report.
@@ -2897,9 +2907,8 @@ def load_workflow_from_json(
             if stamp_status and stamp_status not in NODE_STAMP_STATUSES:
                 # A workflow file -- hand-written, synthesized, or recipe
                 # persisted by an earlier run -- may only stamp the two
-                # coverage statuses. patch_verified is earned through the
-                # re-attack flow and closes findings at the MCP gate;
-                # reported would reopen dismissals. Refuse rather than trust.
+                # coverage statuses. `reported` would reopen dismissals, so
+                # refuse rather than trust.
                 print(
                     f"[graph_loader] node '{node_id}': on_enter_status "
                     f"'{node_cfg.on_enter_status}' is not a status a node may stamp "

@@ -228,7 +228,7 @@ class CompanionLookupTest(_DbBase):
 
 class EvidenceKeepsTheScaffoldTest(_DbBase):
     """run_sandbox_with_evidence stores the PoC's in-tree files when the
-    evidence lands -- and only then, and not in the patcher."""
+    evidence lands -- and only then."""
 
     def _guest(self, stdout=TOKEN + "\n"):
         return _Guest(files={STAGING_MARKER: "", "pkg/repro12_test.go": "package pkg\n",
@@ -251,13 +251,6 @@ class EvidenceKeepsTheScaffoldTest(_DbBase):
         self._ctx(self._guest(stdout="nothing\n"))
         res = await run_sandbox_with_evidence("python3 workspace/repro_12.py", finding_id=12)
         self.assertFalse(res["evidence_present"])
-        self.assertEqual(res["scaffold_files_kept"], [])
-        self.assertEqual(read_artifacts_like(self.db, NEW, "%repro\\_12%"), [])
-
-    async def test_the_patcher_keeps_nothing(self):
-        self._ctx(self._guest(), node="patcher")
-        res = await run_sandbox_with_evidence("python3 workspace/repro_12.py", finding_id=12)
-        self.assertTrue(res["evidence_present"])
         self.assertEqual(res["scaffold_files_kept"], [])
         self.assertEqual(read_artifacts_like(self.db, NEW, "%repro\\_12%"), [])
 

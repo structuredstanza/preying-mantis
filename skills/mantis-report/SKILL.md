@@ -3,7 +3,7 @@ name: mantis-report
 description: >-
   Generates a human-readable security review packet compiled from confirmed findings and exploit chains.
   Use at the end of a review cycle to produce stakeholder-facing documentation.
-  Don't use for auditing code or verifying patches directly.
+  Don't use for auditing code or verifying reproductions directly.
 ---
 
 # Reporter (/mantis-report)
@@ -32,8 +32,8 @@ high-quality, human-readable review packet for developers and stakeholders.
     `vcs_info` and `active_snapshot` {`root`, `snapshot_id`, `snapshot_pinned`}
     for provenance).
   - Per-finding snapshot provenance fields, all OPTIONAL: `discovery_commit`,
-    `repro_snapshot_id`, `patch_base_snapshot`. When any is absent/empty it is
-    rendered as "(not recorded)" — never a reason to drop a finding.
+    `repro_snapshot_id`. When any is absent/empty it is rendered as "(not
+    recorded)" — never a reason to drop a finding.
 - **Writes**:
   - `workspace/report/review_packet_pass_<N>_<snapshot_tag>.md` (pass- and
     snapshot-tagged markdown report). Falls back to the unsuffixed
@@ -67,7 +67,7 @@ LOCATOR RESOLUTION (before reading ANY target code or artifact):
 1. Determine CODE_ROOT, in this priority order:
    a. If --target_root is passed on THIS invocation, CODE_ROOT = --target_root.
       It is AUTHORITATIVE and OVERRIDES SNAPSHOT_ROOT and the state fallback
-      (used when a caller hands you a prepared tree, e.g. a patched shadow).
+      (used when a caller hands you a prepared tree).
    b. Else if --snapshot_root (or SNAPSHOT_ROOT) is passed, use it.
    c. Else read state_root/workspace/.mantis_state.json (state_root from
       --state_root if passed, else ./workspace/... relative to the current dir)
@@ -147,11 +147,10 @@ Execute the reporting stage as follows:
    today to prevent any silent-drop risk.
 
    1. Read all active `workspace/findings/*.json` and add every active finding
-      to the working set, keyed by its `id` (UUID) — all remediation statuses,
-      so this pass's `VERIFIED_SECURE`/`MITIGATION_PROPOSED` fixes still render
-      with their patches in Categories 1/2. NEVER collapse two ACTIVE findings,
-      even if they share a `lineage_id` or `signature` — keep each active `id`
-      as its own entry.
+      to the working set, keyed by its `id` (UUID) — every status, so this
+      pass's confirmed findings still render. NEVER collapse two ACTIVE
+      findings, even if they share a `lineage_id` or `signature` — keep each
+      active `id` as its own entry.
    2. Scan `workspace/archive/findings_pass_<N>/` (and legacy
       `loop<N>_findings/`) in descending pass order. Add an archived finding
       only if it is still OPEN (see 4) AND NO finding already in the working set
@@ -187,13 +186,10 @@ Execute the reporting stage as follows:
       `NON_VIABLE`, `DUPLICATE`, `failed_to_reproduce`, or ordinary
       `statically_confirmed` findings lacking empirical traces.
    5. **Open predicate** (archived carry-forward in step 2 only): an archived
-      finding is "still open" if it satisfies (4) AND `patch_status` is NOT
-      `VERIFIED_SECURE`/`MITIGATION_PROPOSED` AND `status` is not
+      finding is "still open" if it satisfies (4) AND `status` is not
       `FALSE_POSITIVE`/`DUPLICATE` AND `production_viability` is not
-      `NON_VIABLE`. (Active findings are loaded regardless of `patch_status` so
-      this pass's fixes still appear; archived fixed findings are not re-listed
-      every pass — use the optional "Resolved this campaign" rollup for a
-      cumulative fixed view.)
+      `NON_VIABLE`. (Active findings are always loaded so this pass's results
+      appear; archived findings are not re-listed every pass.)
    6. **Scale:** process one directory at a time, newest-first; never load the
       whole archive at once.
 
@@ -237,16 +233,8 @@ Execute the reporting stage as follows:
      production viability reasoning (`critic_reasoning`), and outrage factor
      analysis (`outrage_commentary`).
    - **Remediation & Patch:**
-     - The recommended mitigation strategy.
-     - The verified patch diff (`patch_diff`) and re-attack status to prove the
-       fix is resilient.
-     - **Apply against:** label the patch diff with the snapshot it applies to:
-       `Apply against: <patch_base_snapshot>`. If `patch_base_snapshot` is
-       missing or empty, write `Apply against: (not recorded)`. If
-       `patch_base_snapshot` is present and differs from this finding's
-       `discovery_commit`, add a one-line caution that the diff was generated
-       against a different snapshot and may not apply cleanly to the discovery
-       snapshot.
+     - The recommended remediation strategy, in prose. This tool reports
+       defects; it does not author patches.
    - **PII & Secrets Redaction:** Before writing any finding data (including
      description, PoC script/command, and reproducer logs) to the report, you
      **must** scan and redact any hardcoded API keys, tokens, credentials, PII
@@ -267,7 +255,7 @@ Execute the reporting stage as follows:
      `active_snapshot` from `workspace/.mantis_state.json`. - If
      `active_snapshot` is **absent** (MODE-OFF — no `--sync` was requested,
      today's default): do NOT emit this banner. The run is byte-for-byte today's
-     behavior; the report's `VERIFIED_SECURE` findings and other verdicts are
+     behavior; the report's `dynamic_confirmed` findings and other verdicts are
      valid as today. Emitting a NON-AUTHORITATIVE banner here would contradict
      the verdicts the same run produces. - If `active_snapshot` IS present but
      `snapshot_pinned` is `false` (HALT mode): emit as the FIRST line of the
@@ -310,26 +298,24 @@ Execute the reporting stage as follows:
           provenance; it does not gate or drop any finding.
 
      2. Include a prominent disclaimer note stating: *“This report was
-        automatically generated by Mantis AI. All findings and patches are
-        AI-generated and must be manually verified by a security or subject
-        matter expert before deployment or disclosure.”*
+        automatically generated by Mantis AI. All findings are AI-generated and
+        must be manually verified by a security or subject matter expert before
+        disclosure.”*
 
-   - **Grouping by Patch Status (Exclusivity):** Organize the Executive Summary
-     table and the main body of the report by grouping findings. **Exploit
-     chains MUST be excluded from these main groups and reported ONLY in their
-     dedicated "Exploit Chains (Not End-to-End Reproduced)" section.** For
-     standard (non-chain) findings, group them into three distinct categories
-     based on their remediation status (strictly mutually exclusive):
+   - **Grouping by Confirmation Status (Exclusivity):** Organize the Executive
+     Summary table and the main body of the report by grouping findings.
+     **Exploit chains MUST be excluded from these main groups and reported ONLY
+     in their dedicated "Exploit Chains (Not End-to-End Reproduced)" section.**
+     For standard (non-chain) findings, group them into three distinct
+     categories based on their remediation status (strictly mutually exclusive):
 
-     1. **Category 1: Patch Independently Verified**: Findings where
-        `patch_status` is `"VERIFIED_SECURE"`.
-     2. **Category 2: Patch Proposed / Mitigation Identified**: Findings where
-        `patch_status` is in
-        `["MITIGATION_PROPOSED", "VERIFICATION_INCOMPLETE"]` OR (`patch_diff` is
-        present AND `patch_status` is unset/empty).
-     3. **Category 3: Unpatched / Verification Failed**: Findings where
-        `patch_status` is in `["VERIFICATION_FAILED", "ERROR"]` OR (`patch_diff`
-        is not present AND `patch_status` is unset/empty).
+     1. **Category 1: Dynamically Confirmed**: Findings where `status` is
+        `dynamic_confirmed` — a PoC reached the sink.
+     2. **Category 2: Statically Confirmed**: Findings where `status` is
+        `static_confirmed` or `confirmed` — a stage validated the data flow by
+        reading the code.
+     3. **Category 3: Reported / Unverified**: Findings still at `reported`,
+        where no stage has yet confirmed reachability.
 
    - **Dedicated Exploit Chains Section:** Create a dedicated section titled
      `"Exploit Chains (Not End-to-End Reproduced)"` specifically for exploit
@@ -374,10 +360,9 @@ Execute the reporting stage as follows:
 
    - **Optional sections (recommended):**
 
-     - **Resolved this campaign:** A short rollup using the same fold, but
-       filtering to findings where `patch_status` is `VERIFIED_SECURE` or
-       `MITIGATION_PROPOSED`. This gives stakeholders a visible "what got fixed"
-       view alongside the open findings.
+     - **Still open from earlier runs:** A short rollup using the same fold,
+       listing findings an earlier run reported whose `status` is still open.
+       This gives stakeholders a view of what carried over.
      - **Unresolved — retry cap reached:** A callout listing open findings whose
        reproduction attempt count is at the cap. The count is NOT a field on the
        finding JSON; it lives in the cache file

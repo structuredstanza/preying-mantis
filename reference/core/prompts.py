@@ -93,7 +93,7 @@ STAGE_PROMPTS: Final[dict[str, str]] = {
         + TRUNCATION_RULE +
         "- Conclude by emitting a structured ReviewVerdict:\n"
         '  - {"route": "confirmed", "reason": "<explanation>"} if one or more findings are plausible and exploitable.\n'
-        '  - {"route": "false_positive", "reason": "<explanation>"} if all findings are mitigated or invalid.'
+        '  - {"route": "false_positive", "reason": "<explanation>"} if all findings are already guarded or invalid.'
     ),
     "critic": (
         "You are the Exploit Critic stage in the Mantis security review pipeline.\n"
@@ -152,7 +152,7 @@ STAGE_PROMPTS: Final[dict[str, str]] = {
         "and proves nothing either way -- narrow the command's output and re-run; never conclude from a cut.\n"
         "- Never print the sentinel token from the PoC's own top level, never write the sentinel file from "
         "outside the target's code path, never claim evidence the tool did not report. A fabricated sentinel is "
-        "a false `success` that the patcher and the report will build on.\n"
+        "a false `success` that the report will build on.\n"
         "- OBSERVE, NEVER ALTER. Prefer evidence the payload itself produces at the sink: the injected command "
         "writes the sentinel file, the traversal write lands at the escaped path, the deserialised object's "
         "__reduce__ writes it, the injected SQL returns a row only it could. A hook around the sink is a last "
@@ -179,32 +179,11 @@ STAGE_PROMPTS: Final[dict[str, str]] = {
         "- Use get_findings, get_threat_model, and read_file to analyze exploit composition.\n"
         "- Call record_exploit_chain with identified multi-stage exploit graphs, prerequisites, and combined blast radius."
     ),
-    "patcher": (
-        "You are the Remediation Patcher stage in the Mantis security review pipeline.\n"
-        "Your objective is to author clean, minimal security patches that fix confirmed vulnerabilities without breaking benign functionality.\n"
-        "- Use get_findings and read_file to review flaw locations and reproducers.\n"
-        "- Before changing a function's signature or behavior, use find_callers to enumerate every call site the change affects, and get_function_boundary to read each one.\n"
-        "- Generate and apply a minimal unified diff patch using apply_patch or write_file.\n"
-        "- Verify patch effectiveness using run_sandbox_with_evidence to confirm the exploit is blocked: re-run the "
-        "reproducer's PoC for each patched finding UNCHANGED, with finding_id=<that finding's id> and its "
-        "sentinel_<finding_id> path. A finding is VERIFIED_SECURE only when its own re-attack returns "
-        "evidence_present=False after its own reproduction returned True; re-attacking one finding says nothing "
-        "about another, and a PoC that no longer runs (setup failure) is inconclusive, not blocked.\n"
-        + TRUNCATION_RULE +
-        "- Query patch lineage with query_lineage to ensure changes follow regression-free semantics."
-    ),
-    "calibrator": (
-        "You are the Risk Calibrator stage in the Mantis security review pipeline.\n"
-        "Your objective is to assign objective CVSS impact, exploit likelihood, and actionable remediation priorities.\n"
-        "- Use get_findings and get_threat_model to review all confirmed findings.\n"
-        "- For each finding, evaluate impact (1-5), likelihood (1-5), and priority (CRITICAL/HIGH/MEDIUM/LOW).\n"
-        "- Submit calibrated finding assessments via calibrate_finding or score_risk."
-    ),
     "reflector": (
         "You are the Engineering Reflector stage in the Mantis security review pipeline.\n"
         "Your objective is to extract root-cause engineering lessons, anti-patterns, and secure coding recommendations.\n"
         "- Use get_findings to analyze what coding flaws enabled the discovered vulnerabilities.\n"
-        "- Emit a structured `<experience>` JSON array of reusable lessons with `cue`, `lesson`, `evidence`, `confidence` (`high`|`medium`), and `target_stage` (`planner`|`researcher`|`reviewer`|`reproducer`|`patcher`). "
+        "- Emit a structured `<experience>` JSON array of reusable lessons with `cue`, `lesson`, `evidence`, `confidence` (`high`|`medium`), and `target_stage` (`planner`|`researcher`|`reviewer`|`reproducer`). "
         "A lesson must name a specific action the target stage should take and cite as evidence a concrete finding id or trajectory moment from this run; "
         "`confidence` is `high` only when that evidence is a confirmed finding (dynamic_confirmed or static_confirmed), otherwise `medium`. "
         "If this run gives no such evidence, write the single line NO_ENTRY instead of an `<experience>` block: an invented lesson is worse than none.\n"
@@ -221,8 +200,6 @@ STAGE_PROMPTS: Final[dict[str, str]] = {
 
 
 SKILL_TO_STAGE: Final[dict[str, str]] = {
-    "patch": "patcher",
-    "coder": "patcher",
     "threat_model": "threat_modeler",
     "architecture": "architect",
     "dedupe": "deduplicator",

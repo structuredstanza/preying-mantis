@@ -20,7 +20,7 @@ prompt fences:
 - **INV-1 & INV-2 (Evidence & Re-attack)**: Enforced by `sandbox_tools.py`
   reached-sink sentinel verification and `schemas.py` validation. Objective
   third-party re-attack and strict separation-of-duties role separation are
-  orchestrated by `mantis-patch` to eliminate self-grading confirmation bias.
+  orchestrated by the harness to eliminate self-grading confirmation bias.
 - **INV-3 (Regression Tracking)**: Enforced by finding lineage schemas and
   snapshot-match rules.
 - **INV-4 (Target Immutability & Host Boundary)**: Enforced by
@@ -35,9 +35,9 @@ prompt fences:
 - **INV-6 (Fail-Safe Backward Compatibility)**: Enforced by schema defaults and
   fail-closed degradation gates.
 
-Skills must remain clean, dense domain guides focused on vulnerability analysis,
-attack vectors, and remediation. Do not re-embed bash Git commands, manual file
-locking, or ASCII block fences in skill prompts. All invariants are verified by
+Skills must remain clean, dense domain guides focused on vulnerability analysis
+and attack vectors. Do not re-embed bash Git commands, manual file locking, or
+ASCII block fences in skill prompts. All invariants are verified by
 `reference/tests/test_adk_invariants.py`.
 
 ## Reference files
@@ -52,19 +52,19 @@ disk and is tracked by git (`git ls-files --error-unmatch <path>`).
 Extract a block into a `references/` file only if ALL three hold:
 
 1. **Off the fail-closed safety-critical path** — the extracted content is not
-   the sole authority for a security-critical invariant (e.g. the
-   `VERIFIED_SECURE => reattack_status = failed_to_bypass` gate).
+   the sole authority for a security-critical invariant (e.g. the reached-sink
+   evidence gate that decides `dynamic_confirmed`).
 2. **Restates no invariant** — the extracted content does not restate any rule
    that is also stated in the SKILL.md (no invariant may appear in both a
    SKILL.md and its reference; if a rule must be referenced, state it once and
    point to it).
 3. **Clean fail-safe fallback** — if the reference cannot be loaded, the skill
-   falls back to safe behavior without the reference (e.g. patch rebasing falls
-   back to fresh patch generation, verified by re-attack verification).
+   falls back to safe behavior without the reference (e.g. the calibration rules
+   fall back to the inline default rubric).
 
-`skills/mantis-patch/references/patch_rebasing.md` qualifies (pure mechanics, no
-invariant restated, fails safe to Phase-1). Do not extract content that restates
-a crown-jewel invariant — trim it inline instead.
+`skills/mantis-calibrate/references/calibration_rules.md` qualifies (pure
+mechanics, no invariant restated, fails safe to the inline rubric). Do not
+extract content that restates a crown-jewel invariant — trim it inline instead.
 
 ## Structural index spec
 

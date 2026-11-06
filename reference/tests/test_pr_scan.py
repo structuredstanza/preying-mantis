@@ -145,7 +145,11 @@ class DriverCase(unittest.TestCase):
         self.summary = Path(self.tmp) / "summary.md"
         self.gh_out = Path(self.tmp) / "gh_output"
         self.state_root = Path(self.tmp) / "state"
-        self.env = {**os.environ, "GEMINI_API_KEY": "test-key"}
+        # The default model is vertex_ai/, which the credential preflight
+        # (rightly) refuses without a project. Supplied here rather than
+        # inherited, so the suite does not pass only on hosts that happen to
+        # export one. Tests about a missing project build their own env.
+        self.env = {**os.environ, "GEMINI_API_KEY": "test-key", "GOOGLE_CLOUD_PROJECT": "test-project"}
 
     def run_main(self, *extra, env=None, scan=None, daily=("--daily-token-budget", "0")):
         argv = ["--repo", str(self.repo), "--base", self.base,

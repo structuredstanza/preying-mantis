@@ -354,7 +354,7 @@ async def _drive_campaign(
                     stamped_nodes.add(node_name)
                     new_status = status_map[node_name]
                     ctx = current_run_context.get()
-                    if new_status in ("dynamic_confirmed", "patch_verified") and not (ctx and ctx.sandbox_executed):
+                    if new_status == "dynamic_confirmed" and not (ctx and ctx.sandbox_executed):
                         pass
                     elif ctx is not None:
                         # Per finding for the dynamic statuses: the same
@@ -1459,9 +1459,8 @@ async def _rerun_prior_pocs(ctx, db_path: str, run_id: str, prior: list[dict],
 
     Done by the harness before the graph runs: it does not depend on which
     stages a campaign reaches (a run that finds nothing goes straight to the
-    report), and the guest is still the operator's code, before any patch
-    the patcher may apply. The PoC must have proved the finding before (the
-    finding is dynamic_confirmed) for its silence to mean anything now:
+    report). The PoC must have proved the finding before (the finding is
+    dynamic_confirmed) for its silence to mean anything now:
     then reaching the sink is still_present, not reaching it when the PoC
     ran is fixed, and a PoC that did not run (traceback, missing module,
     exit 127, a build that found no scaffold) is inconclusive and left to
@@ -1677,11 +1676,12 @@ def _settle_regression_checks(db_path: str, run_id: str, prior: list[dict]) -> d
     else was said -- closing is the one action that must not happen on a
     disagreement; then a fixed check (dynamic before static), propagated across
     all open sibling rows of that lineage; then nothing, which is unverified.
-    A fixed finding is closed as mitigated -- the operator chose this -- with
-    the evidence kind on the record. Returns the summary `{"still_present":
-    [...], "fixed": [...], "unverified": [...]}` of ids.
+    A finding whose path the run found closed gets a note on its row with the
+    evidence kind -- the status is left alone, because this tool reports
+    defects rather than adjudicating fixes. Returns the summary
+    `{"still_present": [...], "fixed": [...], "unverified": [...]}` of ids.
     """
-    from core.database import mitigate_finding, read_findings, read_regression_checks
+    from core.database import note_regression_fixed, read_findings, read_regression_checks
     from core.database import record_regression_check as _record
 
     summary = {"still_present": [], "fixed": [], "unverified": []}
@@ -1757,7 +1757,7 @@ def _settle_regression_checks(db_path: str, run_id: str, prior: list[dict]) -> d
                     if src_pid == pid
                     else f"{c['evidence']} evidence (via #{src_pid}): {c.get('reason') or ''}"
                 )
-                if mitigate_finding(db_path, pid, mit_reason, by_run_id=run_id):
+                if note_regression_fixed(db_path, pid, mit_reason, by_run_id=run_id):
                     summary["fixed"].append(pid)
                 else:
                     summary["unverified"].append(pid)
@@ -2486,31 +2486,15 @@ async def pipeline(
     # The jail stays the repository root even when scanning a slice: git history is a
     # whole-repository fact, and a slice-sized jail would make it unavailable.
     jail_dir = str(target_path.parent) if target_path.is_file() else str(target_path)
-    # --path-root: the caller's answer to "relative to WHAT?". A scan of one
-    # file knows only the file, so finding paths anchor at its parent and the
-    # repository prefix is lost ("routes/login.ts" stored as "login.ts");
-    # only the caller knows the enclosing repository. An anchor that is not
-    # an ancestor of the target could never yield a relative path, so it is
-    # rejected before any budget is spent (absence of the flag is still the
-    # old unrooted behaviour).
-    resolved_path_root = ""
-    if path_root:
-        _root = os.path.realpath(os.path.expanduser(path_root))
-        _tgt = os.path.realpath(str(target_path))
-        if os.path.isdir(_root) and (_tgt == _root or _tgt.startswith(_root + os.sep)):
-            resolved_path_root = _root
-        else:
-            reason = (
-                "not a directory" if not os.path.isdir(_root)
-                else "not an ancestor directory of the target"
-            )
-            print(
-                f"Error: --path-root '{path_root}' is {reason} "
-                f"(target resolves to {_tgt}). Pass an ancestor directory, or "
-                "omit --path-root for unrooted single-file behaviour.",
-                file=sys.stderr,
-            )
-            return 1
+    # --path-root: the caller's answer to "relative to WHAT?" (see
+    # core.paths.validate_path_root). Rejected before any budget is spent;
+    # the launcher applies the same rule before any environment work.
+    from core.paths import validate_path_root
+
+    resolved_path_root, path_root_err = validate_path_root(path_root, target_path)
+    if path_root_err:
+        print(f"Error: {path_root_err}", file=sys.stderr)
+        return 1
     # A resumed run keeps its recorded scan mode (INV-5); any conflicting
     # --scan-mode was already rejected above with EXIT_USAGE. Copied rather
     # than mutated in place so a one-run CLI flag never rewrites the
@@ -3318,9 +3302,8 @@ async def pipeline(
 
             # What earlier runs established here. Findings and learnings have always
             # accumulated across runs, but nothing assembled them for the node that
-            # decides where to look: `get_findings` is scoped to the current run, and
-            # only the patcher carries the cross-run tools -- long after the decisions
-            # that mattered. Without this every audit rediscovers the same ground.
+            # decides where to look: `get_findings` is scoped to the current run.
+            # Without the cross-run view every audit rediscovers the same ground.
             prior_memory = ""
             hypotheses_text = ""
             try:
@@ -3770,7 +3753,7 @@ async def pipeline(
     scores = read_risk_scores(db_path, run_id=run_id)
 
     # A change-scoped run answers for the findings earlier runs reported in
-    # the files it examined: still present, fixed (closed as mitigated), or
+    # the files it examined: still present, path closed (noted, not closed), or
     # unverified. Settled from the recorded checks and lineage, never from
     # silence alone.
     if prior_in_scope:
@@ -3780,7 +3763,7 @@ async def pipeline(
                 return ", ".join(f"#{i}" for i in settled[key]) or "none"
             print(
                 f"\n🔁 Earlier findings in the changed files: {len(settled['still_present'])} still present "
-                f"({_ids('still_present')}); {len(settled['fixed'])} fixed and closed as mitigated "
+                f"({_ids('still_present')}); {len(settled['fixed'])} with the path now closed "
                 f"({_ids('fixed')}); {len(settled['unverified'])} unverified ({_ids('unverified')})."
             )
             if settled["unverified"]:

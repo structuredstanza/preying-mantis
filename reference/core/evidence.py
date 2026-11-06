@@ -77,7 +77,7 @@ TO DO:
 THE HARD LINE
 -------------
 No source below TIER_CODE may set a verdict field -- `status`, `repro_status`,
-`reattack_status`, `patch_status`. Those are governed by INV-1 and INV-2 and require
+`reattack_status`. Those are governed by INV-1 and INV-2 and require
 reached-sink evidence. A wiki page is not evidence of reachability-in-fact.
 
 The blast radius of a fully hostile non-code source is therefore bounded to misdirected
@@ -109,7 +109,6 @@ VERDICT_FIELDS = frozenset({
     "status",
     "repro_status",
     "reattack_status",
-    "patch_status",
     "reached_sink",
 })
 

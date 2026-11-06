@@ -20,9 +20,8 @@ Findings and learnings accumulate across runs -- `query_historical_lineage` and
 `read_learnings` have never been run-scoped -- but nothing assembled them for the node
 that decides where to look. Measured on a two-run database: a prior run's confirmed
 finding and its recorded learning both sit in the tables, and `get_findings` returns
-zero, because the tool passes `run_id=ctx.run_id`. Only the patcher carries
-`get_security_guidance` and `query_lineage`, and it runs after the decisions that
-mattered. So every audit rediscovered the same ground, and a false positive triaged in
+zero, because the tool passes `run_id=ctx.run_id`. Nothing carried
+`get_security_guidance` and `query_lineage` early enough to matter. So every audit rediscovered the same ground, and a false positive triaged in
 January was re-triaged in February at full cost.
 
 THE TRUST BOUNDARY THIS MODULE ENFORCES
@@ -85,7 +84,6 @@ _STATUSES_CONFIRMED = (
     "reproduced",
     "dynamic_confirmed",
     "static_confirmed",
-    "patch_verified",
 )
 _STATUSES_DISMISSED = ("false_positive", "non_viable", "sample_or_test")
 # Found once, then shelved when the code under it changed and a rescan did not

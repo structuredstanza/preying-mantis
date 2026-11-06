@@ -19,7 +19,7 @@ A tool output cut without saying so is read as the whole observation, and a
 verdict drawn from where the cut fell is a verdict drawn from the harness.
 These tests pin the three things that stop that: every cut goes through
 core.truncation and announces itself in one shape; the limits on outputs the
-reviewer, critic, reproducer and patcher read are never below 10,000 chars;
+reviewer, critic and reproducer read are never below 10,000 chars;
 and check_reached_sink_evidence never reads "sentinel not in a cut trace" as
 "sentinel absent" (INV-1 fails closed with a reason that says why).
 """
@@ -319,21 +319,6 @@ class SandboxBackendMarkerTest(unittest.IsolatedAsyncioTestCase):
             res = await env.execute("./poc")
         self.assertEqual((res.stdout, res.stderr), ("short", ""))
 
-    async def test_gvisor_execute_and_apply_patch_announce_a_cut_stream(self):
-        from core.environments import gvisor_env
-        with patch("shutil.which", return_value="/usr/bin/docker"):
-            env = gvisor_env.GvisorEnvironment(container_tool="docker")
-        env._ensure = AsyncMock(return_value=None)
-        long_out = "o" * (gvisor_env.MAX_OUTPUT + 1)
-        with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout=long_out, stderr="")):
-            res = await env.execute("./poc")
-        self.assertIn(f"sandbox stdout cut by the harness after {gvisor_env.MAX_OUTPUT} of {len(long_out)} chars (1 omitted)", res.stdout)
-        self.assertEqual(res.stderr, "")
-        with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout=long_out, stderr="")):
-            out = await env.apply_patch("--- a\n+++ b\n")
-        self.assertTrue(out.startswith("exit=0\n" + "o" * gvisor_env.MAX_OUTPUT + "\n" + TRUNCATION_MARKER_PREFIX))
-        self.assertIn("patch output cut by the harness", out)
-
     async def test_microsandbox_execute_announces_a_cut_stream(self):
         from core.environments import microsandbox_env
         env = microsandbox_env.MicrosandboxEnvironment.__new__(microsandbox_env.MicrosandboxEnvironment)
@@ -521,7 +506,7 @@ class VerdictStagePromptRuleTest(unittest.TestCase):
     def test_each_verdict_stage_prompt_names_the_marker_and_the_rule(self):
         from core.prompts import STAGE_PROMPTS, TRUNCATION_RULE
         self.assertIn(TRUNCATION_MARKER_PREFIX.rstrip(":"), TRUNCATION_RULE)
-        for stage in ("reviewer", "critic", "reproducer", "patcher"):
+        for stage in ("reviewer", "critic", "reproducer"):
             with self.subTest(stage=stage):
                 prompt = STAGE_PROMPTS[stage]
                 self.assertIn("[MANTIS TRUNCATION: ...]", prompt)

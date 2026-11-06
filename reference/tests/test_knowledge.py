@@ -98,7 +98,6 @@ class TestExport(unittest.TestCase):
         for r in recs:
             self.assertTrue(r["lineage_id"], "findings carry lineage ids so re-scans match them")
             self.assertNotIn("embedding", r)
-            self.assertNotIn("patch_diff", r)
         joined = "\n".join(lines)
         self.assertNotIn("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", joined, "credentials are scrubbed")
         self.assertNotIn("\x1b", joined, "control characters are scrubbed")

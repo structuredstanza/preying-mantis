@@ -78,7 +78,7 @@ FINDING_FIELDS = (
     "lineage_id", "signature", "filepath", "line_numbers", "title", "severity",
     "priority", "cwe", "status", "description", "remediation", "triage_reasoning",
     "rca_summary", "code_paths", "mantis_risk_score", "impact_score",
-    "likelihood_score", "patch_status", "run_id", "model", "timestamp",
+    "likelihood_score", "run_id", "model", "timestamp",
 )
 _TEXT_FIELDS = ("title", "description", "remediation", "triage_reasoning", "rca_summary")
 
@@ -584,15 +584,15 @@ def _import_findings(conn: sqlite3.Connection, path: Path) -> Tuple[int, int]:
                 """INSERT OR IGNORE INTO findings
                    (run_id, filepath, title, severity, description, line_numbers, remediation,
                     status, mantis_risk_score, impact_score, likelihood_score, priority,
-                    signature, lineage_id, cwe, triage_reasoning, patch_status, rca_summary, code_paths)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    signature, lineage_id, cwe, triage_reasoning, rca_summary, code_paths)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (_short(rec.get("run_id")) or "imported", filepath, title,
                  _short(rec.get("severity")), _scrub(rec.get("description")), json.dumps(lines),
                  _scrub(rec.get("remediation")), status, _number(rec.get("mantis_risk_score")),
                  _number(rec.get("impact_score")), _number(rec.get("likelihood_score")),
                  _short(rec.get("priority")), signature or None, lineage or None,
                  _short(rec.get("cwe")), _scrub(rec.get("triage_reasoning")),
-                 _short(rec.get("patch_status")), _scrub(rec.get("rca_summary")), json.dumps(code_paths)))
+                 _scrub(rec.get("rca_summary")), json.dumps(code_paths)))
             inserted += 1
         except sqlite3.Error:
             skipped += 1
@@ -809,16 +809,14 @@ def _import_coverage(db_path: str, path: Path, repo_root: str, targets: List[str
     return runs, paths
 
 
-def import_knowledge(db_path: str, in_dir: str, run_id: str, repo_root: str,
-                     target: Optional[str] = None) -> Dict[str, Any]:
-    """Reads a knowledge export into the database. Returns counts.
+def read_export_manifest(in_dir: str) -> Dict[str, Any]:
+    """The export's manifest, or KnowledgeImportError naming why the directory
+    is not an export this version reads.
 
-    Findings and learnings are added as history (the run ids they carry are
-    kept); the threat model, architecture, and summary are recorded under
-    `run_id` so the run's own tools find them; coverage is replayed for
-    `repo_root` and, if different, `target`. Raises KnowledgeImportError when
-    the directory is not an export this version reads; everything else
-    degrades to "that part was not imported".
+    Separate from import_knowledge so a caller can reject a bad
+    `--import-knowledge` path before doing any environment work: a typo in the
+    path is the operator's error to fix, and reporting a credential or sandbox
+    problem first sends them after the wrong one.
     """
     src = Path(in_dir)
     if not src.is_dir():
@@ -834,6 +832,22 @@ def import_knowledge(db_path: str, in_dir: str, run_id: str, repo_root: str,
     if version not in READABLE_SCHEMA_VERSIONS:
         raise KnowledgeImportError(
             f"knowledge schema_version {version!r} is not one of {READABLE_SCHEMA_VERSIONS}; refusing to guess")
+    return manifest
+
+
+def import_knowledge(db_path: str, in_dir: str, run_id: str, repo_root: str,
+                     target: Optional[str] = None) -> Dict[str, Any]:
+    """Reads a knowledge export into the database. Returns counts.
+
+    Findings and learnings are added as history (the run ids they carry are
+    kept); the threat model, architecture, and summary are recorded under
+    `run_id` so the run's own tools find them; coverage is replayed for
+    `repo_root` and, if different, `target`. Raises KnowledgeImportError when
+    the directory is not an export this version reads; everything else
+    degrades to "that part was not imported".
+    """
+    src = Path(in_dir)
+    read_export_manifest(in_dir)
 
     from core.database import init_db
 

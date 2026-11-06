@@ -48,8 +48,8 @@ produce a final risk score (1-10).
 
 ## Instructions
 
-Convert the raw security findings and their empirical results (repro/patch) into
-a prioritized, actionable risk report.
+Convert the raw security findings and their empirical results (repro) into a
+prioritized, actionable risk report.
 
 Execute the calibration as follows:
 
@@ -128,7 +128,7 @@ mode — the tree raced or could not be pinned) -> MODE = HALT. `SNAPSHOT_ID` =
 `active_snapshot.snapshot_id` (a `live:` id). Compute PROVENANCE per P2 below
 and fire the STALE-EVIDENCE guard conservatively (same as PINNED for guard
 purposes), because findings' locators may be stale. Authoritative verdicts
-(VERIFIED_SECURE, failed_to_reproduce, DUPLICATE, FALSE_POSITIVE, NON_VIABLE)
+(dynamic_confirmed, failed_to_reproduce, DUPLICATE, FALSE_POSITIVE, NON_VIABLE)
 are forbidden this pass. - `snapshot_pinned` == `true` -> MODE = PINNED.
 `SNAPSHOT_ID` = `active_snapshot.snapshot_id`. Full provenance + STALE-EVIDENCE
 guard as below.

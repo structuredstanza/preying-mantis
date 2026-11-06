@@ -41,9 +41,15 @@ Mantis uses a layered configuration pattern:
 When you run `./run.sh` or `scripts/configure.py --auto`, Mantis auto-heals
 unconfigured placeholders and writes the resolved settings into
 `workflow.local.json`. This ensures your `git status` remains clean after
-running campaigns. To opt out of auto-healing, pass `--no-auto-configure`. To
-explicitly save changes to the base tracked `workflow.json`, use
-`--save-tracked` (or `--global`).
+running campaigns. To opt out of auto-healing, pass `--no-auto-configure`:
+nothing is written, but `--model`, `--api-base`, `--sandbox` and the other
+per-run flags still apply to that run, and preflight checks the configuration
+the run will actually use. To explicitly save changes to the base tracked
+`workflow.json`, use `--save-tracked` (or `--global`).
+
+Arguments are validated before the environment: a bad `--path-root` or
+`--import-knowledge` is reported as itself, before any credential or sandbox
+preflight and before graph synthesis spends anything.
 
 You can customize the sandbox execution mechanism (`static-only`, `gvisor`,
 `microsandbox`, `gce`) or AI model at any time:
@@ -56,14 +62,6 @@ python3 scripts/configure.py --sandbox static-only
 ./run.sh path/to/code --sandbox static-only --model gemini-3.8-flash
 ```
 
-Once you have run it you can add the mantis-advise skill to your favorite coding
-agent and use that while developing your code to have your coding agent attempt
-to create fewer vulnerabilities. To try it manually you can run the script:
-
-```
-python3 scripts/advise.py --file path/to/file.py   # query accumulated knowledge
-```
-
 ### Secure Development Loop (MCP Server)
 
 [`scripts/mcp_server.py`](scripts/mcp_server.py) serves Mantis to MCP-capable
@@ -74,6 +72,14 @@ tree-sitter catalog, and a background `mantis_scan_change` that runs the full
 audit pipeline over changed files while development continues. The same gate
 runs one-shot in pre-commit hooks and CI via `--check`. See
 [docs/mcp.md](docs/mcp.md).
+
+### Local UI (watch, triage, launch)
+
+[`scripts/ui.py`](scripts/ui.py) serves one page for one `knowledge.db`: it
+tails a run's transcript, closes findings through the same monotonic guard the
+MCP tool uses, and launches a run by showing `launch.py --dry-run`'s own plan
+first. Loopback by default; a non-loopback bind requires `--token`. See
+[docs/ui.md](docs/ui.md).
 
 ## Benchmarks
 
@@ -94,10 +100,7 @@ deterministic, zero-LLM surveyor ranking benchmark and LLM stage evals
   [`scripts/launch.py`](scripts/launch.py)): Autonomous campaign launcher.
   Auto-heals unconfigured placeholders (e.g. `YOUR_PROJECT_ID`) into
   `workflow.local.json`, validates preflight readiness, accepts CLI overrides,
-  and executes the 16-agent review graph over target files or repositories.
-- **`mantis-advise`** ([`scripts/advise.py`](scripts/advise.py)): Developer
-  security advisor. Queries threat models, historical lineages, verified patch
-  diffs, and triaged false positives from `knowledge.db`.
+  and executes the 18-node review graph over target files or repositories.
 
 ## Research Graph Synthesis & Evolution Flywheel
 
@@ -147,8 +150,7 @@ through deterministic architectural gates:
 1. **Tool Registry Gate**: Only strictly whitelisted ADK tools (`read_file`,
    `list_files`, `get_findings`, `report_findings`, etc.) are permitted.
 2. **Topological & Cycle Validation Gate**: Synthesizer ensures connected, valid
-   DAG structures with validated cyclical feedback loops (e.g. patch
-   verification loops).
+   DAG structures with validated cyclical feedback loops.
 3. **Structured Verdict Mapping**: Review, Critic, and Reproducer nodes are
    automatically bound to structured Pydantic schemas (`ReviewVerdict`,
    `CriticVerdict`, `ReproVerdict`).
@@ -323,11 +325,12 @@ What `changed` writes to `knowledge.db`:
   under the same `lineage_id`, settlement closes all open sibling rows together
   when fixed — and fails closed (keeping all of them open) if any check or
   re-report finds the defect `still_present`.
-- **Inspecting fix verdicts**: each run prints a
+- **Inspecting re-test verdicts**: each run prints a
   `🔁 Earlier findings in the changed files` summary, records per-finding
   evidence in `regression_checks` (`SELECT * FROM regression_checks;`), and
-  transitions fixed rows in `findings` to `status = 'mitigated'` (with
-  `[mitigated by run ...]` in `triage_reasoning`).
+  notes a path the run found closed in `triage_reasoning` as
+  `[path closed at run ...]`. It does not close the finding: this tool reports
+  defects, it does not adjudicate fixes.
 
 A ledger from before content was recorded cannot say what changed, so the first
 `changed` run over it scans the whole target once. To keep those earlier
@@ -452,7 +455,7 @@ Every fact carries the tier of the source it came from, and a tier states what a
 claim is *allowed to do* — not whether it is true:
 
 - **`code`** — bytes on disk under the scan root. The only tier that may support
-  a verdict (`status`, `repro_status`, `reattack_status`, `patch_status`).
+  a verdict (`status`, `repro_status`, `reattack_status`).
 - **`history`** — version-control metadata. Says what changed, never whether the
   change was correct.
 - **`intent`** — human prose: wikis, tickets, design docs. Directs attention and
@@ -513,16 +516,16 @@ The limits on outputs the verdict stages read are never below 10,000 characters.
 The marker exists because a cut that is not announced is read as the whole
 observation: a file that ends before its bounds check reads as a missing check,
 a sandbox log that ends before its sentinel reads as a PoC that never got there,
-and both become verdicts carrying INV-1 weight. So the reviewer, critic,
-reproducer and patcher prompts say that the marker is the harness cutting the
-observation and never evidence, and `check_reached_sink_evidence` fails closed
-with a distinct `EVIDENCE_TRUNCATED` reason — not `EVIDENCE_ABSENT` — when the
-sentinel is not found in a trace that carries the marker. Proof that survives a
-cut still counts; only silence from a cut trace is refused.
+and both become verdicts carrying INV-1 weight. So the reviewer, critic and
+reproducer prompts say that the marker is the harness cutting the observation
+and never evidence, and `check_reached_sink_evidence` fails closed with a
+distinct `EVIDENCE_TRUNCATED` reason — not `EVIDENCE_ABSENT` — when the sentinel
+is not found in a trace that carries the marker. Proof that survives a cut still
+counts; only silence from a cut trace is refused.
 
 ## Custom Tools
 
-The 28 built-in tools are a closed set, and a workflow naming anything else
+The 29 built-in tools are a closed set, and a workflow naming anything else
 fails validation. Without a way in, a site with an internal taint engine or a
 house SAST tool has exactly one option: fork. A fork never receives the next
 security fix, so leaving the set closed does not prevent custom tools — it makes
@@ -530,7 +533,7 @@ the unsafe way the only way.
 
 ### Why a declared tool inherits no trust
 
-The built-in 28 are not safe because they are confined. Most run on the host
+The built-in 29 are not safe because they are confined. Most run on the host
 with the host's full privilege: nothing in the process stops `read_file` from
 opening `~/.ssh/id_rsa`. They are safe because they **are** the enforcement —
 `read_file` is the containment for reads, `run_sandbox` for execution,
@@ -725,12 +728,11 @@ Stack overflow in parse_token
 
 unbounded memcpy
 
-[Mantis unverified: no reproduction or patch verification is recorded.
+[Mantis unverified: no reproduction verification is recorded.
  Triage status: VALID.]
 ```
 
-Machine-readable copies also go in the result property bag as `mantis-status`
-and `mantis-patch-status`.
+The machine-readable status goes in the result property bag as `mantis-status`.
 
 ### What else is emitted
 
@@ -753,7 +755,7 @@ success, and writing it would let the run report success anyway.
 
 ## Core Pipeline Stages
 
-The pipeline in `workflow.json` orchestrates 15 canonical stages across the
+The pipeline in `workflow.json` orchestrates 14 canonical stages across the
 complete vulnerability campaign lifecycle:
 
 01. **`history`**: Extracts commit history, churn hotspots, and developer
@@ -776,16 +778,13 @@ complete vulnerability campaign lifecycle:
 09. **`critic`**: Conducts adversarial viability review (`CriticVerdict`).
 10. **`reproducer`**: Synthesizes and runs dynamic exploit PoCs inside the
     isolated sandbox (`ReproVerdict`).
-11. **`chainer`**: Chains related findings into multi-stage exploit
-    trajectories.
-12. **`patcher`**: Autonomous remediation conductor with strict separation of
-    duties; delegates code authoring to isolated subagents, commissions
-    independent third-party re-attackers with parallel adversarial trajectory
-    search, and enforces dual-gate sandbox verification.
-13. **`calibrator`**: Calibrates final risk scores (0–100) and justification.
-14. **`reflector`**: Rotates learnings and feedback into the knowledge base
+11. **`chainer`**: Links individually confirmed findings into composite exploit
+    chains, so a report shows the impact of the combination rather than a list
+    of unrelated defects.
+12. **`calibrator`**: Calibrates final risk scores (0–100) and justification.
+13. **`reflector`**: Rotates learnings and feedback into the knowledge base
     (`workspace/learnings.jsonl`).
-15. **`reporter`**: Compiles the final review packet and executive summary
+14. **`reporter`**: Compiles the final review packet and executive summary
     (`workspace/report/review_packet-latest.md`).
 
 ## Sandboxing & Isolation
@@ -809,7 +808,7 @@ To change the sandbox backend, update the `"config.sandbox"` block in
 
 #### 1. Static-Only (`"static-only"`)
 
-Zero dependencies. Dynamic exploit execution and patch testing are skipped.
+Zero dependencies. Dynamic exploit execution is skipped.
 
 ```json
 "sandbox": {

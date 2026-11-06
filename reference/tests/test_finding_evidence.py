@@ -17,8 +17,7 @@
 `dynamic_confirmed` used to be stamped on every finding in a campaign once
 any PoC reached a sink: in a whole-tree run, one sentinel upgraded sixteen
 findings. run_sandbox_with_evidence now records which finding each verdict
-was about, and the completion stamp upgrades only those. The same record
-gates VERIFIED_SECURE per finding in the patcher's report.
+was about, and the completion stamp upgrades only those.
 """
 
 from __future__ import annotations
@@ -150,19 +149,6 @@ class EvidenceIsRecordedPerFindingTest(_Base):
         self.assertTrue(ctx.sandbox_executed)
         self.assertEqual(ctx.finding_evidence, {})
 
-    async def test_in_the_patcher_the_last_reattack_counts(self):
-        ctx = self._ctx(_ScriptedSandbox(stdout=TOKEN + "\n"), node="reproducer")
-        await run_sandbox_with_evidence("python3 poc.py", finding_id=1)
-        ctx.active_node = "patcher"
-        await run_sandbox_with_evidence("python3 poc.py", finding_id=1)  # still reaches: patch bypassed
-        e = ctx.finding_evidence["1"]
-        self.assertEqual((e["reproduced"], e["reattacked"], e["reattack_present"]), (True, True, True))
-        ctx.sandbox.stdout = "blocked\n"
-        await run_sandbox_with_evidence("python3 poc.py", finding_id=1)  # fixed again, re-attacked again
-        e = ctx.finding_evidence["1"]
-        self.assertEqual((e["reproduced"], e["reattacked"], e["reattack_present"]), (True, True, False))
-
-
 class UpdateStatusByIdTest(_Base):
     async def test_ids_narrow_the_campaign_stamp(self):
         ids = self._seed(4)
@@ -219,30 +205,40 @@ class CompletionStampTest(_Base):
         self.assertEqual(set(self._statuses().values()), {"static_confirmed"})
 
     async def test_unattributed_evidence_stamps_a_lone_finding_and_nothing_in_a_crowd(self):
+        """An unattributed reached-sink verdict is attributed only when it cannot
+        mean anything else.
+
+        `sandbox_executed` is set only when a PoC produced evidence, so with one
+        open finding the verdict is about that finding. With two it could be
+        either, and a guess must not earn the strongest label this tool has.
+        """
         ids = self._seed(1)
         ctx = self._ctx()
         ctx.sandbox_executed = True
         self.assertEqual(apply_completion_stamp(ctx, "dynamic_confirmed", "reproducer"), ids)
         self.assertEqual(self._statuses()[ids[0]], "dynamic_confirmed")
-        # A second campaign with four open findings and the same unattributed bit.
-        ids4 = [i for i in self._seed(5) if i not in ids]
-        ctx2 = RunContext(jail_dir=self.target, db_path=self.db, target_file=self.target, run_id="run-1")
+
+        self._seed(2)
+        ctx2 = self._ctx()
         ctx2.sandbox_executed = True
         self.assertEqual(apply_completion_stamp(ctx2, "dynamic_confirmed", "reproducer"), [])
-        st = self._statuses()
-        self.assertTrue(all(st[i] == "static_confirmed" for i in ids4),
-                        "one anonymous sentinel must not upgrade four findings")
 
-    async def test_patch_verified_needs_reproduced_then_reattacked_absent(self):
+    async def test_variant_hunting_never_moves_a_status(self):
+        """A re-attack records what it found; it does not decide a verdict.
+
+        Only reached-sink reproduction earns `dynamic_confirmed`. A finding
+        whose variants all failed to trigger is not more confirmed than one
+        never re-attacked: the stamp reads `reproduced` alone.
+        """
         ids = self._seed(3)
         ctx = self._ctx()
         ctx.sandbox_executed = True
         ctx.finding_evidence = {
-            str(ids[0]): {"reproduced": True, "reattacked": True, "reattack_present": False},
-            str(ids[1]): {"reproduced": True, "reattacked": True, "reattack_present": True},
-            str(ids[2]): {"reproduced": False, "reattacked": True, "reattack_present": False},
+            str(ids[0]): {"reproduced": True},
+            str(ids[1]): {"reproduced": True},
+            str(ids[2]): {"reproduced": False},
         }
-        self.assertEqual(stamp_finding_ids(ctx, "patch_verified"), [ids[0]])
+        self.assertEqual(stamp_finding_ids(ctx, "dynamic_confirmed"), sorted([ids[0], ids[1]]))
 
     async def test_stamping_is_best_effort(self):
         ctx = self._ctx()
@@ -252,61 +248,45 @@ class CompletionStampTest(_Base):
         apply_completion_stamp(ctx, "dynamic_confirmed", "reproducer")  # must not raise
 
 
-class VerifiedSecureIsPerFindingTest(_Base):
-    def _report(self, ids, evidence, campaign_bit=True):
-        findings = []
-        for i in ids:
-            findings.append({"id": i, "title": f"bug {i}", "severity": "HIGH", "status": "dynamic_confirmed",
-                             "description": f"d{i}", "line_numbers": [i], "filepath": f"pkg/mod{i}.py",
-                             "cwe": "CWE-89", "patch_status": "VERIFIED_SECURE",
-                             "reattack_status": "failed_to_bypass", "patch_diff": "--- a\n+++ b\n"})
-        write_findings(self.db, self.target, findings, run_id="run-1", verified_evidence=campaign_bit,
-                       finding_evidence=evidence)
-        return {r["id"]: r["patch_status"] for r in read_findings(self.db, run_id="run-1")}
-
-    async def test_one_reattack_does_not_verify_the_others(self):
+class PerFindingDynamicStampTest(_Base):
+    async def test_one_reproduction_does_not_upgrade_the_others(self):
         ids = self._seed(3)
-        got = self._report(ids, {str(ids[0]): {"reproduced": True, "reattacked": True, "reattack_present": False}})
-        self.assertEqual(got[ids[0]], "VERIFIED_SECURE")
-        self.assertEqual(got[ids[1]], "VERIFICATION_INCOMPLETE", "never re-attacked")
-        self.assertEqual(got[ids[2]], "VERIFICATION_INCOMPLETE")
-
-    async def test_a_bypassed_or_unreproduced_finding_is_not_verified(self):
-        ids = self._seed(2)
-        got = self._report(ids, {
-            str(ids[0]): {"reproduced": True, "reattacked": True, "reattack_present": True},
-            str(ids[1]): {"reproduced": False, "reattacked": True, "reattack_present": False},
-        })
-        self.assertEqual(set(got.values()), {"VERIFICATION_INCOMPLETE"})
-
-    async def test_without_an_attributed_record_the_campaign_rule_still_applies(self):
-        ids = self._seed(1)
-        self.assertEqual(self._report(ids, {})[ids[0]], "VERIFIED_SECURE", "old behaviour when nothing is attributed")
-        update_status(self.db, self.target, "run-1", "reported")
-        self.assertEqual(self._report(ids, {}, campaign_bit=False)[ids[0]], "VERIFICATION_INCOMPLETE")
+        ctx = self._ctx()
+        ctx.sandbox_executed = True
+        ctx.finding_evidence = {str(ids[0]): {"reproduced": True}}
+        apply_completion_stamp(ctx, "dynamic_confirmed", "reproducer")
+        st = self._statuses()
+        self.assertEqual(st[ids[0]], "dynamic_confirmed")
+        self.assertEqual(st[ids[1]], "static_confirmed")
+        self.assertEqual(st[ids[2]], "static_confirmed")
 
     async def test_a_report_without_ids_is_matched_to_its_row(self):
         ids = self._seed(2)
-        findings = [{"title": f"bug {i}", "severity": "HIGH", "status": "dynamic_confirmed", "description": f"d{i}",
-                     "line_numbers": [i], "filepath": f"pkg/mod{i}.py", "cwe": "CWE-89",
-                     "patch_status": "VERIFIED_SECURE", "reattack_status": "failed_to_bypass",
-                     "patch_diff": "--- a\n+++ b\n"} for i in (1, 2)]
-        write_findings(self.db, self.target, findings, run_id="run-1", verified_evidence=True,
-                       finding_evidence={str(ids[1]): {"reproduced": True, "reattacked": True,
-                                                       "reattack_present": False}})
-        got = {r["id"]: r["patch_status"] for r in read_findings(self.db, run_id="run-1")}
-        self.assertEqual(got[ids[0]], "VERIFICATION_INCOMPLETE")
-        self.assertEqual(got[ids[1]], "VERIFIED_SECURE")
+        findings = [{"title": f"bug {i}", "severity": "HIGH", "status": "reported",
+                     "description": f"d{i}", "line_numbers": [i],
+                     "filepath": f"pkg/mod{i}.py", "cwe": "CWE-89"} for i in (1, 2)]
+        write_findings(self.db, self.target, findings, run_id="run-1")
+        ctx = self._ctx()
+        ctx.sandbox_executed = True
+        ctx.finding_evidence = {str(ids[1]): {"reproduced": True}}
+        apply_completion_stamp(ctx, "dynamic_confirmed", "reproducer")
+        got = {r["id"]: r["status"] for r in read_findings(self.db, run_id="run-1")}
+        self.assertEqual(got[ids[0]], "static_confirmed")
+        self.assertEqual(got[ids[1]], "dynamic_confirmed")
 
 
 class ToolSurfaceTest(unittest.TestCase):
-    def test_the_prompts_tell_both_stages_to_name_the_finding(self):
+    def test_the_reproducer_prompt_names_the_finding_on_its_evidence_run(self):
+        """Per-finding evidence only exists if the stage passes the id.
+
+        Without `finding_id=` the reached-sink verdict is unattributed, and an
+        unattributed verdict upgrades nothing in a multi-finding campaign.
+        """
         from core.prompts import STAGE_PROMPTS as PROMPTS
 
         self.assertIn("finding_id=", PROMPTS["reproducer"])
-        self.assertIn("static_confirmed", PROMPTS["reproducer"])
-        self.assertIn("finding_id=", PROMPTS["patcher"])
-        self.assertIn("UNCHANGED", PROMPTS["patcher"])
+        self.assertIn("sentinel_<finding_id>", PROMPTS["reproducer"])
+        self.assertNotIn("patcher", PROMPTS, "the patcher stage is gone")
 
     def test_every_campaign_gets_its_own_ledger(self):
         import dataclasses

@@ -28,7 +28,7 @@ from core.truncation import truncate_with_marker
 from .base import BaseEnvironment
 from .static_env import PROTECTED_VCS_DIRS, PROTECTED_METADATA_FILES
 
-# Per-stream cap on what one execute() or apply_patch() hands back. Must stay
+# Per-stream cap on what one execute() hands back. Must stay
 # >= 10_000 and the cut must be announced (core.truncation): the reproducer
 # reads this trace for the reached-sink sentinel, and a silent cut before the
 # sentinel reads as "the PoC never got there".
@@ -41,7 +41,7 @@ class GvisorEnvironment(BaseEnvironment):
     - ISOLATED FILESYSTEM: Target code is copied into a clean container workspace (/workspace).
     - NO HOST FS ACCESS: Container has no mounts to the host filesystem.
     - NETWORKLESS: --network=none guarantees strict network isolation.
-    - STATEFUL PATCHING: State persists across execute() and apply_patch() calls within a file run.
+    - STATEFUL EXECUTION: State persists across execute() calls within a file run.
     - ADK COMPLIANT: Implements execute(), read_file(), write_file(), initialize(), close().
     """
 
@@ -301,51 +301,6 @@ class GvisorEnvironment(BaseEnvironment):
             return sorted(file_list)
 
         return await asyncio.to_thread(_list)
-
-    async def apply_patch(self, diff: str) -> str:
-        await self._ensure()
-
-        def _patch():
-            rc, out = self._run_cmd(
-                [self.tool, "exec", "-i", self.container_name, "patch", "--batch", "--force", "-p1"],
-                stdin=diff,
-            )
-            if rc in (126, 127) or "executable file not found" in out.lower():
-                return None  # no patch(1): the caller runs the python3 fallback
-            if rc != 0:
-                rc_retry, out_retry = self._run_cmd(
-                    [self.tool, "exec", "-i", self.container_name, "patch", "--batch", "--force"],
-                    stdin=diff,
-                )
-                if rc_retry == 0:
-                    return f"exit=0\n{truncate_with_marker(out_retry, MAX_OUTPUT, what='patch output')}"
-                return f"exit={rc_retry}\n{truncate_with_marker(out_retry, MAX_OUTPUT, what='patch output')}"
-            return f"exit={rc}\n{truncate_with_marker(out, MAX_OUTPUT, what='patch output')}"
-
-        result = await asyncio.to_thread(_patch)
-        if result is not None:
-            return result
-
-        # No patch(1) in the image (python:3-slim, distroless): apply with the
-        # guest's python3 instead of failing the stage.
-        from core.environments.patch_fallback import (
-            PATCH_FILE_NAME, PATCH_SCRIPT_NAME, PYTHON_PATCH_SCRIPT, fallback_argv, unavailable_message,
-        )
-        await self.write_file(Path(PATCH_FILE_NAME), diff)
-        await self.write_file(Path(PATCH_SCRIPT_NAME), PYTHON_PATCH_SCRIPT)
-
-        def _fallback():
-            # The container was created with -w <workdir>, so exec runs there.
-            rc, out = self._run_cmd([self.tool, "exec", self.container_name, *fallback_argv(strip=1)])
-            if rc in (126, 127) or "executable file not found" in out.lower():
-                return unavailable_message(self.image, out)
-            if rc != 0:
-                rc0, out0 = self._run_cmd([self.tool, "exec", self.container_name, *fallback_argv(strip=0)])
-                if rc0 == 0:
-                    return f"exit=0\n{truncate_with_marker(out0, MAX_OUTPUT, what='patch output')}"
-            return f"exit={rc}\n{truncate_with_marker(out, MAX_OUTPUT, what='patch output')}"
-
-        return await asyncio.to_thread(_fallback)
 
     async def preflight(self) -> None:
         def _check():

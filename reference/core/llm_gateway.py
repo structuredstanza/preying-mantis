@@ -306,7 +306,7 @@ def sanitize_egress_text(text: str) -> str:
 # merely displays. Stripping \r from these silently corrupts a CRLF patch so that
 # `git apply` fails or, worse, applies differently than intended. They are still
 # escape-stripped and credential-scrubbed; only the carriage return survives.
-_VERBATIM_EGRESS_FIELDS = frozenset({"patch_diff", "diff", "poc_code", "repro_script", "repro_code"})
+_VERBATIM_EGRESS_FIELDS = frozenset({"diff", "poc_code", "repro_script", "repro_code"})
 
 _VERBATIM_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 

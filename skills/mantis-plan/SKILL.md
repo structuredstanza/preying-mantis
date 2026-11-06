@@ -255,8 +255,7 @@ Execute the planning stage as follows:
        2. **Copy for Retry (snapshot-gated) or Re-discover:** For each archived
           finding that would otherwise be retry-eligible (repro not attempted,
           or `failed_to_reproduce` with fewer than 2 attempts per the cache read
-          rule above, or `patch_status` in
-          {`VERIFICATION_FAILED`,`ERROR`,`VERIFICATION_INCOMPLETE`}), run:
+          rule above), run:
 
           ```
           SNAPSHOT MATCH CHECK for finding F (decides MATCHED vs NOT_MATCHED):
@@ -292,14 +291,13 @@ Execute the planning stage as follows:
             file (first `code_paths`, line stripped) EXISTS under CODE_ROOT
             (drop the `Block B MATCHED` and `file NOT in changed_files`
             conjuncts — there is no `changed_files` diff in MODE-OFF anyway).
-            This mirrors `mantis-patch`'s LEGACY-mode carve- out
-            (`patch:133-138`, `patch:172-174`). Do NOT gate the bypass on
-            `snapshot_pinned==false` — that would also catch HALT mode, where
-            the STALE banner legitimately marks the finding as needing
-            re-verification. Gate ONLY on `active_snapshot` absent. (Do NOT
-            change Block B itself — it is character-identical across skills per
-            `README_AGENTS.md:711-718` block-fidelity warning; the fix goes in
-            plan's CONSUMERS of Block B, not Block B.)
+            This mirrors the LEGACY-mode carve-out the snapshot rules use. Do
+            NOT gate the bypass on `snapshot_pinned==false` — that would also
+            catch HALT mode, where the STALE banner legitimately marks the
+            finding as needing re-verification. Gate ONLY on `active_snapshot`
+            absent. (Do NOT change Block B itself — it is character-identical
+            across skills per `README_AGENTS.md:711-718` block-fidelity warning;
+            the fix goes in plan's CONSUMERS of Block B, not Block B.)
 
           - **RE-DISCOVER** in every other case (Block B NOT_MATCHED, or file in
             `changed_files`, or file missing, or
@@ -361,21 +359,19 @@ Execute the planning stage as follows:
               RE-DISCOVER.
 
           - **NEVER copy back** a finding whose `"status"` is
-            `"FALSE_POSITIVE"`, or `"patch_status"` is `"VERIFIED_SECURE"`, or
-            `"repro_status"` is `"reproduced"` (unless patch failed as above),
-            or that has reached the 2-attempt cap for the CURRENT snapshot. But
-            if such a finding's file IS in `changed_files` or Block B is
-            NOT_MATCHED, treat it as a possible regression: RE-DISCOVER it (do
-            not trust the old terminal verdict against changed code). **MODE-OFF
-            carve-out:** if `active_snapshot` is ABSENT (MODE-OFF), drop the
+            `"FALSE_POSITIVE"`, or `"repro_status"` is `"reproduced"`, or that
+            has reached the 2-attempt cap for the CURRENT snapshot. But if such
+            a finding's file IS in `changed_files` or Block B is NOT_MATCHED,
+            treat it as a possible regression: RE-DISCOVER it (do not trust the
+            old terminal verdict against changed code). **MODE-OFF carve-out:**
+            if `active_snapshot` is ABSENT (MODE-OFF), drop the
             `or Block B is NOT_MATCHED` disjunct above — in MODE-OFF, Block B is
             NOT_MATCHED for every finding (artifact of no snapshot, not a signal
             of drift), so leaving the disjunct in would re-open every terminal
-            verdict (FALSE_POSITIVE/VERIFIED_SECURE/reproduced) every pass. In
-            MODE-OFF, rely ONLY on `file IS in changed_files` (which is
-            vacuously false in MODE-OFF — there is no `changed_files` diff), so
-            terminal findings are carried forward unchanged. This is today's
-            behavior.
+            verdict (FALSE_POSITIVE/reproduced) every pass. In MODE-OFF, rely
+            ONLY on `file IS in changed_files` (which is vacuously false in
+            MODE-OFF — there is no `changed_files` diff), so terminal findings
+            are carried forward unchanged. This is today's behavior.
 
      - **Changed / new attack-surface coverage (MANDATORY):** Add an
        investigation titled `Exhaustive Review: <path>` for EVERY path in

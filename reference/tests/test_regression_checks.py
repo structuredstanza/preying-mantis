@@ -17,8 +17,9 @@ files it examines: still present, fixed, or unverified.
 
 The decision is recorded per prior finding (regression_checks) with the kind
 of evidence the harness can vouch for -- the prior PoC re-run, a re-report
-under the same lineage, a reviewer's reading, or nothing -- and a fixed
-finding is closed as mitigated. Silence never closes anything.
+under the same lineage, a reviewer's reading, or nothing. A closed path is
+noted on the row, never written as a status: this tool reports defects, it
+does not adjudicate fixes. Silence never closes anything.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ if str(_REF_ROOT) not in sys.path:
 
 from core.context import RunContext, current_run_context  # noqa: E402
 from core.database import (  # noqa: E402
-    init_db, mitigate_finding, prior_findings_touching, read_findings, read_regression_checks,
+    init_db, note_regression_fixed, prior_findings_touching, read_findings, read_regression_checks,
     record_artifact, record_regression_check, write_findings,
 )
 
@@ -74,7 +75,7 @@ class _Base(unittest.IsolatedAsyncioTestCase):
             _finding("b.py", "traversal in b"),
             _finding("pkg/c.py", "ssrf in c", status="static_confirmed"),
             _finding("web/r.py", "route bug", code_paths=["web/r.py:5", "b.py:12"]),
-            _finding("a.py", "closed one", status="mitigated"),
+            _finding("a.py", "closed one", status="false_positive"),
         ], run_id=OLD)
         return {f["title"]: f for f in read_findings(self.db, run_id=OLD)}
 
@@ -115,17 +116,15 @@ class RecordAndCloseTest(_Base):
         self.assertIsNone(record_regression_check(self.db, NEW, pid, "fixed", evidence="vibes"))
         self.assertEqual(read_regression_checks(os.path.join(self.tmp, "none.db")), [])
 
-    async def test_mitigate_closes_an_open_finding_once_and_keeps_the_reason(self):
+    async def test_a_closed_path_is_noted_and_never_closes_the_finding(self):
+        """This tool reports defects; it does not adjudicate fixes."""
         old = self.seed_old()
         pid = old["SQLi in a"]["id"]
-        self.assertTrue(mitigate_finding(self.db, pid, "parameterised query", by_run_id=NEW))
+        self.assertTrue(note_regression_fixed(self.db, pid, "parameterised query", by_run_id=NEW))
         row = next(f for f in read_findings(self.db, run_id=OLD) if f["id"] == pid)
-        self.assertEqual(row["status"], "mitigated")
-        self.assertIn("[mitigated by run 22222222] parameterised query", row["triage_reasoning"])
-        self.assertFalse(mitigate_finding(self.db, pid, "again"), "already closed: no change")
-        self.assertFalse(mitigate_finding(self.db, 9999, "x"))
-        fp = old["closed one"]["id"]
-        self.assertFalse(mitigate_finding(self.db, fp, "x"), "a closed finding stays as it was")
+        self.assertEqual(row["status"], "dynamic_confirmed", "the finding stays open")
+        self.assertIn("[path closed at run 22222222] parameterised query", row["triage_reasoning"])
+        self.assertFalse(note_regression_fixed(self.db, 9999, "x"), "no such finding")
 
 
 class ToolTest(_Base):
@@ -275,8 +274,12 @@ class SettlementTest(_Base):
         write_findings(self.db, self.target, [_finding("b.py", "traversal in b")], run_id=NEW)
         settled = main._settle_regression_checks(self.db, NEW, prior)
         self.assertEqual(settled, {"still_present": [b], "fixed": [a], "unverified": [c]})
-        st = {f["id"]: f["status"] for f in read_findings(self.db, run_id=OLD)}
-        self.assertEqual((st[a], st[b], st[c]), ("mitigated", "dynamic_confirmed", "dynamic_confirmed"))
+        rows = {f["id"]: f for f in read_findings(self.db, run_id=OLD)}
+        st = {k: v["status"] for k, v in rows.items()}
+        self.assertEqual((st[a], st[b], st[c]),
+                         ("dynamic_confirmed", "dynamic_confirmed", "dynamic_confirmed"),
+                         "settling never rewrites a status")
+        self.assertIn("[path closed at run", rows[a]["triage_reasoning"])
         kinds: dict = {}
         for r in read_regression_checks(self.db, run_id=NEW):
             kinds.setdefault(r["prior_finding_id"], set()).add((r["outcome"], r["evidence"]))
@@ -357,7 +360,7 @@ class SettlementTest(_Base):
         settled = main._settle_regression_checks(self.db, NEW, self._prior())
         self.assertEqual(settled["fixed"], [b])
         row = next(f for f in read_findings(self.db, run_id=OLD) if f["id"] == b)
-        self.assertEqual(row["status"], "mitigated")
+        self.assertEqual(row["status"], "dynamic_confirmed", "a note, not a closure")
         self.assertIn("dynamic evidence: PoC absent", row["triage_reasoning"])
 
     async def test_empty_prior_is_a_no_op(self):
@@ -390,7 +393,8 @@ class SettlementTest(_Base):
         self.assertEqual(settled_a, {"still_present": [], "fixed": ids_a, "unverified": []})
         for f in read_findings(self.db, scope_path=self.target):
             if f["id"] in ids_a:
-                self.assertEqual(f["status"], "mitigated")
+                self.assertIn("[path closed at run", f["triage_reasoning"],
+                              "every sibling of the lineage is noted")
 
         # Disagreement across siblings of one lineage fails closed: none close.
         for rid in (r1, r2):
@@ -474,7 +478,9 @@ class HarnessRerunTest(_Base):
         self.assertEqual(settled["still_present"], [b])
         self.assertEqual(settled["unverified"], sorted([c, old["route bug"]["id"]]),
                          "no PoC proved these before; nothing to re-run, nobody decided")
-        self.assertEqual(next(f["status"] for f in read_findings(self.db, run_id=OLD) if f["id"] == a), "mitigated")
+        closed = next(f for f in read_findings(self.db, run_id=OLD) if f["id"] == a)
+        self.assertEqual(closed["status"], "dynamic_confirmed")
+        self.assertIn("[path closed at run", closed["triage_reasoning"])
 
     async def test_a_silent_poc_in_an_unchanged_file_is_never_a_fix(self):
         """The one thing a regression check must not do is close a live

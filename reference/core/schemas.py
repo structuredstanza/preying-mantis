@@ -119,13 +119,11 @@ class FindingSchema(BaseModel):
     repro_file_path: Optional[str] = Field(default="", description="Path to the generated PoC script or payload.")
     run_command: Optional[str] = Field(default="", description="The exact command used to execute the PoC.")
     repro_output: Optional[str] = Field(default="", description="Standard output and error from the sandbox run.")
-    patch_status: Optional[Literal["VERIFIED_SECURE", "MITIGATION_PROPOSED", "VERIFICATION_INCOMPLETE", "VERIFICATION_FAILED", "ERROR"]] = Field(default=None, description="The outcome of the patching and re-attack attempts.")
-    patch_diff: Optional[str] = Field(default="", description="The unified diff of the verified fix, or mitigation recommendation.")
-    reattack_status: Optional[Literal["bypassed_patch", "failed_to_bypass", "inconclusive_baseline_changed"]] = Field(default=None, description="The outcome of the variant-hunting re-attack. `failed_to_bypass` requires a non-")
+    reattack_status: Optional[Literal["generalizes", "isolated", "inconclusive_baseline_changed"]] = Field(default=None, description="The outcome of the variant-hunting re-attack. `isolated` requires a non-empty `reattack_variants` array with >= 3 valid variant inputs that ALL failed to trigger the bug; an empty or short set makes 'all variants failed' vacuously true, so it caps at the weaker verdict and may only coexist with `inconclusive_baseline_changed`. `generalizes` means at least one valid variant triggered the same vulnerability class. `inconclusive_baseline_changed` means the baseline no longer triggers on the current snapshot. Never gates a status.")
     reattack_file_path: Optional[str] = Field(default="", description="Path to the newly generated re-attack script.")
     reattack_run_command: Optional[str] = Field(default="", description="The exact execution command used for the re-attack.")
     reattack_output: Optional[str] = Field(default="", description="Standard output and error from the re-attack run.")
-    reattack_variants: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="Variant inputs attempted during the variant-hunting re-attack. Each entry record")
+    reattack_variants: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="Variant inputs attempted during the variant-hunting re-attack. Each entry records a mutation strategy and whether it triggered the bug. A variant counts as triggered only if it reproduces the original vulnerability class (same sink/crash type) and is a valid input per the reproduce skill's Step 4 constraints. Must be non-empty (>= 3 entries) for reattack_status = isolated; an empty array may only coexist with inconclusive_baseline_changed. Populated by the reproduce skill when reattack_status is set; absent for legacy findings.")
     impact_score: Optional[int] = Field(default=None, description="Calculated technical impact (1-5) on CIA triad.")
     likelihood_score: Optional[int] = Field(default=None, description="Probability of occurrence (1-5) based on proven exploitability.")
     availability_tier: Optional[Literal["CRITICAL", "STANDARD", "LOW_CRITICALITY"]] = Field(default=None, description="Availability criticality of the component if availability impact exists.")
@@ -140,7 +138,6 @@ class FindingSchema(BaseModel):
     discovery_commit: Optional[str] = Field(default="", description="The SNAPSHOT_ID (see the SNAPSHOT_ID ladder in the top-level description) of the")
     repro_snapshot_id: Optional[str] = Field(default="", description="The SNAPSHOT_ID the reproduction attempt (repro_status / repro_file_path / repro")
     reattack_snapshot_id: Optional[str] = Field(default="", description="The SNAPSHOT_ID the re-attack (reattack_status / reattack_output) was executed a")
-    patch_base_snapshot: Optional[str] = Field(default="", description="The SNAPSHOT_ID of the snapshot the patch_diff was generated and verified agains")
     possible_duplicate_of: Optional[str] = Field(default="", description="UUID of a finding this one MIGHT duplicate but which could NOT be confirmed as a")
     cwe: Optional[str] = Field(default="", description="CWE identifier for this vulnerability (e.g. 'CWE-787'). Optional and backward-co")
     signature: Optional[str] = Field(default="", description="Deterministic stable signature of this finding's content identity, computed once")
@@ -165,17 +162,6 @@ class FindingSchema(BaseModel):
             return v.upper()
         return v
 
-    @model_validator(mode='after')
-    def validate_invariants(self) -> FindingSchema:
-        # INV-1 / INV-2: VERIFIED_SECURE requires failed_to_bypass reattack_status
-        if self.patch_status == "VERIFIED_SECURE":
-            if self.reattack_status != "failed_to_bypass":
-                raise ValueError(
-                    "INV-1/INV-2 violation: patch_status 'VERIFIED_SECURE' strictly requires "
-                    f"reattack_status to be 'failed_to_bypass', got '{self.reattack_status}'"
-                )
-        return self
-
 class LearningEntrySchema(BaseModel):
     """Schema for a single JSON line in workspace/learnings.jsonl (ephemeral inbox) or workspace/historical"""
     model_config = ConfigDict(extra="allow")
@@ -187,12 +173,10 @@ class LearningEntrySchema(BaseModel):
     snapshot: Optional[str] = Field(default="", description="The SNAPSHOT_ID (SNAPSHOT_ID ladder) this insight was observed against; stamped ")
     title: Optional[str] = Field(default="", description="Finding title.")
     code_paths: Optional[List[str]] = Field(default_factory=list)
-    status: Optional[Literal["VIABLE", "NON_VIABLE", "SAMPLE_OR_TEST", "CONDITIONAL_VIABLE", "FALSE_POSITIVE", "NEEDS_RESEARCH", "VERIFIED_SECURE", "MITIGATION_PROPOSED", "VERIFICATION_INCOMPLETE", "VERIFICATION_FAILED", "ERROR"]] = Field(default=None)
-    patch_base_snapshot: Optional[str] = Field(default="", description="The SNAPSHOT_ID the patch was verified against; written by mantis-coder or mantis-patch (or omitted in LEGACY mode).")
+    status: Optional[Literal["VIABLE", "NON_VIABLE", "SAMPLE_OR_TEST", "CONDITIONAL_VIABLE", "FALSE_POSITIVE", "NEEDS_RESEARCH"]] = Field(default=None)
     revision_id: Optional[str] = Field(default="")
     description: Optional[str] = Field(default="")
     vuln_type: Optional[str] = Field(default="")
-    mitigation_diff: Optional[str] = Field(default="")
     cve: Optional[str] = Field(default="")
     history: Optional[List[HistoryEntrySchema]] = Field(default_factory=list)
     category: Optional[str] = Field(default="", description="Category of learning.")

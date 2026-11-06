@@ -87,7 +87,7 @@ from tools.research_tools import (
     get_security_guidance,
     query_lineage,
 )
-from tools.sandbox_tools import run_sandbox, apply_patch
+from tools.sandbox_tools import run_sandbox
 
 
 class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
@@ -118,7 +118,7 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
                     "history", "structural_index", "architect", "threat_modeler",
                     "planner", "researcher", "findings_gate", "deduplicator", "reviewer", "reviewer_classifier",
                     "critic", "critic_classifier", "reproducer", "repro_classifier",
-                    "chainer", "patcher", "calibrator", "reflector", "reporter"
+                    "chainer", "calibrator", "reflector", "reporter"
                 ],
                 "dynamic_confirmed"
             ),
@@ -204,8 +204,15 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(cfg.get("on_enter_status"), {})
                 # sandbox_executed models the reproducer having actually run
                 # its PoC: INV-1's gate refuses dynamic_confirmed stamps from
-                # runs that never touched a sandbox.
-                ctx = RunContext(jail_dir=temp_dir, db_path=db_path, target_file=target_file, run_id=run_id, sandbox_executed=True)
+                # runs that never touched a sandbox. The evidence ledger models
+                # the reproducer passing finding_id: only a finding with its
+                # own reached-sink record earns the dynamic status.
+                fid = read_findings(db_path, target_file, run_id=run_id)[0]["id"]
+                reproduced = expected_status == "dynamic_confirmed"
+                evidence = {str(fid): {"reproduced": True}} if reproduced else {}
+                ctx = RunContext(jail_dir=temp_dir, db_path=db_path, target_file=target_file,
+                                 run_id=run_id, sandbox_executed=reproduced,
+                                 finding_evidence=evidence)
                 tok = current_run_context.set(ctx)
                 msg = types.Content(parts=[types.Part.from_text(text="Evaluate file.py")], role="user")
                 executed_nodes = []
@@ -244,7 +251,6 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
                     json.dumps({"route": "viable", "reason": "Exploit viable."}),
                     json.dumps({"route": "success", "reason": "Exploit verified."}),
                     "Exploit chained.",
-                    "Patch applied",
                     "Score: 90",
                     "Learnings reflected.",
                     "Report generated.",
@@ -319,7 +325,11 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
                     write_findings(db_path, target_file, [f], run_id=run_id)
                     self.assertEqual(read_findings(db_path, target_file, run_id=run_id)[0]["status"], "reported")
 
-                    ctx = RunContext(jail_dir=temp_dir, db_path=db_path, target_file=target_file, run_id=run_id, sandbox_executed=sb_exec)
+                    fid = read_findings(db_path, target_file, run_id=run_id)[0]["id"]
+                    evidence = ({str(fid): {"reproduced": True}} if sb_exec else {})
+                    ctx = RunContext(jail_dir=temp_dir, db_path=db_path, target_file=target_file,
+                                     run_id=run_id, sandbox_executed=sb_exec,
+                                     finding_evidence=evidence)
                     tok = current_run_context.set(ctx)
                     try:
                         err = await execute_sub_task(
@@ -682,8 +692,9 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(FileNotFoundError):
                 await dir_env.read_file(Path("missing.txt"))
 
-            # 4. Test read_file tool with active sandbox attached
-            ctx_sb = RunContext(jail_dir=jail_dir, db_path="", target_file=inside_file, sandbox=dir_env)
+            # 4. read_file tool with active sandbox attached, directory campaign.
+            # (A file target is a single-file campaign: see 6.)
+            ctx_sb = RunContext(jail_dir=jail_dir, db_path="", target_file=jail_dir, sandbox=dir_env)
             tok = current_run_context.set(ctx_sb)
             try:
                 self.assertIn("content_inside", await read_file("inside.txt"))
@@ -693,14 +704,26 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
             finally:
                 current_run_context.reset(tok)
 
-            # 5. Test read_file tool with direct host fallback (no sandbox)
-            ctx_host = RunContext(jail_dir=jail_dir, db_path="", target_file=inside_file, sandbox=None)
+            # 5. read_file tool with direct host fallback (no sandbox)
+            ctx_host = RunContext(jail_dir=jail_dir, db_path="", target_file=jail_dir, sandbox=None)
             tok = current_run_context.set(ctx_host)
             try:
                 self.assertIn("content_inside", await read_file("inside.txt"))
                 self.assertIn("Permission denied", await read_file("../outside.txt"))
                 self.assertIn("Permission denied", await read_file(outside_file))
                 self.assertIn("File not found", await read_file("missing.txt"))
+            finally:
+                current_run_context.reset(tok)
+
+            # 6. A single-file campaign reads only the scanned file: every other
+            # path, in the jail or out of it, existing or not, is refused
+            # before existence is consulted.
+            ctx_one = RunContext(jail_dir=jail_dir, db_path="", target_file=inside_file, sandbox=dir_env)
+            tok = current_run_context.set(ctx_one)
+            try:
+                self.assertIn("content_inside", await read_file("inside.txt"))
+                for other in ("missing.txt", "../outside.txt", outside_file):
+                    self.assertIn("Permission denied", await read_file(other), other)
             finally:
                 current_run_context.reset(tok)
         finally:
@@ -750,8 +773,9 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(PermissionError):
                 await single_env.list_files("../outside")
 
-            # 4. list_files tool with active sandbox attached
-            ctx_sb = RunContext(jail_dir=jail_dir, db_path="", target_file=file_a, sandbox=dir_env)
+            # 4. list_files tool with active sandbox attached, directory campaign.
+            # (A file target is a single-file campaign: see 6.)
+            ctx_sb = RunContext(jail_dir=jail_dir, db_path="", target_file=jail_dir, sandbox=dir_env)
             tok = current_run_context.set(ctx_sb)
             try:
                 res_json = await list_files()
@@ -762,7 +786,7 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
                 current_run_context.reset(tok)
 
             # 5. list_files tool with direct host fallback (no sandbox)
-            ctx_host = RunContext(jail_dir=jail_dir, db_path="", target_file=file_a, sandbox=None)
+            ctx_host = RunContext(jail_dir=jail_dir, db_path="", target_file=jail_dir, sandbox=None)
             tok = current_run_context.set(ctx_host)
             try:
                 res_host = await list_files()
@@ -771,17 +795,28 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("Directory not found", await list_files("missing"))
             finally:
                 current_run_context.reset(tok)
+
+            # 6. A single-file campaign sees its own directory once, never the
+            # rest of the tree or anything outside the jail.
+            ctx_one = RunContext(jail_dir=jail_dir, db_path="", target_file=file_a, sandbox=dir_env)
+            tok = current_run_context.set(ctx_one)
+            try:
+                res_one = await list_files()
+                self.assertIn("src/app.py", res_one)
+                self.assertNotIn("README.md", res_one)
+                self.assertNotIn("secret.py", res_one)
+                self.assertIn("single-file campaign", res_one)
+            finally:
+                current_run_context.reset(tok)
         finally:
             shutil.rmtree(temp_dir)
 
     async def test_sandbox_tools_with_context(self):
         """Verifies sandbox tool delegators correctly plumb through current_run_context."""
         self.assertIn("No active sandbox", await run_sandbox("echo 1"))
-        self.assertIn("No active sandbox", await apply_patch("diff"))
 
         mock_sb = AsyncMock()
         mock_sb.execute.return_value = "exit=0\nok"
-        mock_sb.apply_patch.return_value = "exit=0\npitched"
 
         ctx = RunContext(jail_dir="/tmp", db_path="", sandbox=mock_sb)
         tok = current_run_context.set(ctx)
@@ -802,9 +837,6 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
             self.assertIn(MANTIS_SENTINEL_TOKEN, res_evid)
             self.assertTrue(ctx.sandbox_executed)
 
-            res_patch = await apply_patch("test_diff")
-            self.assertEqual(res_patch, "exit=0\npitched")
-            mock_sb.apply_patch.assert_called_once_with("test_diff")
         finally:
             current_run_context.reset(tok)
 
@@ -837,7 +869,6 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
         class CustomSeam:
             def __init__(self, target_path: str = "", **_): pass
             async def execute(self, cmd: str) -> str: return "custom_ok"
-            async def apply_patch(self, diff: str) -> str: return "custom_patch"
             async def preflight(self) -> None: pass
             async def aclose(self): pass
 
@@ -910,8 +941,6 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
                 out_exec = await gv.execute("echo hello")
                 self.assertEqual(out_exec.exit_code, 0)
                 self.assertIn("hello gvisor", out_exec.stdout)
-            out_patch = await gv.apply_patch("diff_text")
-            self.assertIn("patch applied", out_patch)
             await gv.aclose()
 
         # 3. Microsandbox KVM access check on Linux
@@ -1102,14 +1131,6 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
             self.assertIn("--tunnel-through-iap", host_argv)
             self.assertIn("--command", host_argv)
             self.assertIn("cd /workspace && echo 'hello payload'", host_argv)
-
-        # 5. Stdin Streaming Patch Application (Unbounded by argv)
-        with patch("subprocess.run") as mock_subproc_patch:
-            mock_subproc_patch.return_value = MagicMock(returncode=0, stdout="patch applied cleanly\n", stderr="")
-            out_patch = await gce_test.apply_patch("diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n")
-            self.assertIn("patch applied cleanly", out_patch)
-            mock_subproc_patch.assert_called_once()
-            self.assertEqual(mock_subproc_patch.call_args[1].get("input"), "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n")
 
         # 6. Base64 File Read & Stdin Streaming File Write (Untruncated Large File Test > 20,000 bytes)
         import base64
@@ -1776,9 +1797,6 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
                 "cwe": "CWE-78",
                 "remediation": "Use subprocess.run(['tar', ...]) without shell=True",
                 "status": "dynamic_confirmed",
-                "reattack_status": "failed_to_bypass",
-                "patch_status": "VERIFIED_SECURE",
-                "patch_diff": "--- a/app.py\n+++ b/app.py\n@@ -10 +10 @@\n-os.system(cmd)\n+subprocess.run(['tar', target])",
             }
             write_findings(db_file, "app.py", [confirmed_f], run_id="run-test")
 
@@ -1818,34 +1836,11 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("# Security Advisory & Development Guidance for: app.py", summary)
                 self.assertIn("Zone 2: Vault Worker Backend", summary)
                 self.assertIn("OS Command Injection in /backup", summary)
-                self.assertIn("Verified Patch Diff", summary)
+                self.assertIn("Remediation Invariant", summary)
                 self.assertIn("Potential SSRF in /metrics", summary)
                 self.assertIn("SANDBOX_ISOLATION", summary)
             finally:
                 current_run_context.reset(tok)
-
-            # Test CLI script execution
-            import subprocess
-            import sys
-            cli_script = os.path.join(os.path.dirname(__file__), "scripts", "advise.py")
-            cli_res = subprocess.run(
-                [sys.executable, cli_script, "--file=app.py", f"--db={db_file}"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            self.assertIn("# Security Advisory & Development Guidance for: app.py", cli_res.stdout)
-            self.assertIn("OS Command Injection in /backup", cli_res.stdout)
-
-            cli_json = subprocess.run(
-                [sys.executable, cli_script, "--file=app.py", f"--db={db_file}", "--json"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            parsed_json = json.loads(cli_json.stdout)
-            self.assertEqual(parsed_json["filepath"], "app.py")
-            self.assertEqual(len(parsed_json["confirmed_vulnerabilities"]), 1)
         finally:
             shutil.rmtree(temp_dir)
 
@@ -2460,12 +2455,20 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("SUCCESS: Saved 1 finding", res_rf2)
 
                 # 9. get_findings campaign scoping and explicit file filtering.
-                # Unscoped reads are scoped to the campaign target (app.py):
-                # in multi-target runs every campaign shares one run_id, and a
-                # run-wide read leaked other campaigns' findings.
+                # Unscoped reads are scoped to the campaign (app.py): in
+                # multi-target runs every campaign shares one run_id, and a
+                # run-wide read leaked other campaigns' findings. A campaign's
+                # own report in another file stays visible: ownership is "what
+                # I reported OR what sits in my path" (_ownership_clause).
+                write_findings(db_path, "src/sibling.py", [{
+                    "title": "Sibling Campaign Finding", "severity": "HIGH",
+                    "description": "reported by another campaign of this run",
+                    "filepath": "src/sibling.py",
+                }], run_id=run_id)
                 res_get = get_findings()
                 self.assertIn("SQL Injection A", res_get)
-                self.assertNotIn("Hardcoded Secret Key", res_get)
+                self.assertIn("Hardcoded Secret Key", res_get, "own cross-file report must stay visible")
+                self.assertNotIn("Sibling Campaign Finding", res_get, "another campaign's finding leaked")
 
                 # Explicitly filtered queries for adjacent files
                 res_get_crypto = get_findings("src/crypto.py")
@@ -2825,6 +2828,7 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(task_ok)
 
+    @patch.dict(os.environ, {"VERTEXAI_PROJECT": "test-project"})
     def test_model_tiering_and_reasoning_effort_propagation(self):
         """Verifies that model tiering and adaptive reasoning effort levels propagate accurately."""
         from core.config import get_llm_kwargs
@@ -2892,50 +2896,6 @@ class TestMantisReferenceSuite(unittest.IsolatedAsyncioTestCase):
         eval_config = EvalConfig.model_validate(raw_cfg)
         self.assertIn("tool_trajectory_avg_score", eval_config.criteria)
         self.assertIn("response_match_score", eval_config.criteria)
-
-    def test_advise_cli_script_execution(self):
-        """Tests that scripts/advise.py executes standalone without active run context and formats guidance."""
-        import subprocess
-        temp_dir = tempfile.mkdtemp()
-        db_file = os.path.join(temp_dir, "test_advise_cli.db")
-        try:
-            init_db(db_file)
-            record_artifact(db_file, "run-1", "threat_model", "workspace/kb/THREAT_MODEL.md", "# Threat Model\nAdmin trust boundary.")
-            write_findings(db_file, "src/auth.py", [{
-                "title": "SQL Injection in get_user",
-                "severity": "HIGH",
-                "description": "Unsanitized query parameter in get_user()",
-                "cwe": "CWE-89",
-                "reattack_status": "failed_to_bypass",
-                "patch_status": "VERIFIED_SECURE",
-                "patch_diff": "--- a\n+++ b\n+ safe_query()",
-            }], run_id="run-1")
-
-            script_path = os.path.join(os.path.dirname(__file__), "scripts", "advise.py")
-
-            # 1. Test markdown advisory output
-            proc = subprocess.run(
-                [sys.executable, script_path, "--db", db_file, "--file", "src/auth.py"],
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(proc.returncode, 0)
-            self.assertIn("# Security Advisory & Development Guidance for: src/auth.py", proc.stdout)
-            self.assertIn("SQL Injection in get_user", proc.stdout)
-            self.assertIn("VERIFIED_SECURE", proc.stdout)
-
-            # 2. Test JSON advisory output
-            proc_json = subprocess.run(
-                [sys.executable, script_path, "--db", db_file, "--file", "src/auth.py", "--json"],
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(proc_json.returncode, 0)
-            data = json.loads(proc_json.stdout)
-            self.assertEqual(data["filepath"], "src/auth.py")
-            self.assertEqual(len(data["confirmed_vulnerabilities"]), 1)
-        finally:
-            shutil.rmtree(temp_dir)
 
     def test_no_skill_system_prompt_loading_and_execution(self):
         """Validates loading an agent configured with literal system_prompt instruction text without a skill (A2)."""
@@ -3458,12 +3418,10 @@ Parses JWT claims.
                 "title": "Unsanitized Token Header",
                 "filepath": "src/auth.py",
                 "severity": "HIGH",
-                "status": "patch_verified",
+                "status": "dynamic_confirmed",
                 "cwe": "CWE-79",
                 "description": "Header injection in token parser.",
                 "remediation": "Sanitize header before forwarding.",
-                "patch_status": "applied",
-                "patch_diff": "--- a/src/auth.py\n+++ b/src/auth.py\n@@ -10,2 +10,2 @@\n- hdr = req.header\n+ hdr = sanitize(req.header)\n",
             }], run_id="run-1")
 
             guidance = query_security_guidance(db_path, filepath="src/auth.py")
@@ -3473,86 +3431,8 @@ Parses JWT claims.
             self.assertIn("[OKF TRUST TIER: HUMAN-REVIEWED]", summary)
             self.assertIn("Auth Ingress Perimeter", summary)
             self.assertIn("Token Sanitization", summary)
-            self.assertIn("Verified Patch Diff (Few-Shot Pattern)", summary)
-            self.assertIn("hdr = sanitize(req.header)", summary)
-        finally:
-            shutil.rmtree(temp_dir)
-
-    def test_advise_cli_execution_with_okf_features(self):
-        """Tests that scripts/advise.py runs as a CLI command supporting --file, --json, and --export-okf."""
-        from core.database import init_db, record_okf_concept
-        temp_dir = tempfile.mkdtemp()
-        try:
-            db_path = os.path.join(temp_dir, "cli_test.db")
-            init_db(db_path)
-            record_okf_concept(db_path, "run-1", {
-                "concept_id": "entities/crypto",
-                "type": "Component Entity",
-                "title": "Crypto Engine",
-                "resource": "src/crypto.py",
-                "trust_tier": "machine_confirmed",
-                "description": "AES operations",
-                "body_markdown": "Uses 256-bit keys.",
-            })
-
-            advise_script = os.path.join(os.path.dirname(__file__), "scripts", "advise.py")
-
-            # 1. Test CLI query --json
-            res_json = subprocess.run(
-                [sys.executable, advise_script, "--db", db_path, "--file", "src/crypto.py", "--json"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            data = json.loads(res_json.stdout)
-            self.assertEqual(data["filepath"], "src/crypto.py")
-            self.assertEqual(data["trust_tier"], "SANDBOX-CONFIRMED")
-            self.assertIn("Crypto Engine", data["guidance_summary"])
-
-            # 2. Test CLI --export-okf
-            export_target = os.path.join(temp_dir, "cli_export_bundle")
-            res_exp = subprocess.run(
-                [sys.executable, advise_script, "--db", db_path, "--export-okf", export_target],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            self.assertIn("Exported", res_exp.stdout)
-            self.assertTrue(os.path.exists(os.path.join(export_target, "index.md")))
-
-            # 3. Test CLI --import-okf into a fresh db
-            imported_db = os.path.join(temp_dir, "imported_via_cli.db")
-            res_imp = subprocess.run(
-                [sys.executable, advise_script, "--db", imported_db, "--import-okf", export_target],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            self.assertIn("Imported", res_imp.stdout)
-
-            # 4. Test CLI --remediate generating architectural remediation dossier
-            from core.database import write_findings
-            write_findings(db_path, "src/crypto.py", [{
-                "filepath": "src/crypto.py",
-                "title": "Insecure AES padding",
-                "severity": "HIGH",
-                "description": "PKCS#7 padding oracle vulnerability.",
-                "remediation": "Use AES-GCM authenticated encryption.",
-                "status": "dynamic_confirmed",
-                "lineage_id": "c3a5e982-1234-5678-9abc-def012345678",
-                "repro_cmd": "python3 repro_aes.py",
-            }], run_id="run-1", status="dynamic_confirmed")
-            res_rem = subprocess.run(
-                [sys.executable, advise_script, "--db", db_path, "--remediate", "src/crypto.py"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            self.assertIn("Architectural Remediation Dossier", res_rem.stdout)
-            self.assertIn("Insecure AES padding", res_rem.stdout)
-            self.assertIn("Crypto Engine", res_rem.stdout)
-            self.assertIn("Use AES-GCM authenticated encryption", res_rem.stdout)
-            self.assertIn("Bypass Prevention", res_rem.stdout)
+            self.assertIn("Unsanitized Token Header", summary)
+            self.assertIn("Sanitize header before forwarding.", summary)
         finally:
             shutil.rmtree(temp_dir)
 
@@ -3994,13 +3874,21 @@ class TestMantisConfigureAndLaunch(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(kwargs.get("vertex_project"), "fallback-sb-project")
 
-            # 3. Placeholder in config is ignored
-            with patch("google.auth.default", side_effect=Exception("No credentials")):
-                with self.assertRaises(ValueError):
-                    get_llm_kwargs(
-                        model_id="vertex_ai/gemini-3.8-flash",
-                        config={"sandbox": {"options": {"project": "YOUR_PROJECT_ID"}}}
-                    )
+            # 3. Placeholder in config is ignored. The ADC lookup is memoised
+            # per process, so clear it on both sides of the patch: a project
+            # cached earlier must not answer for "no credentials", and the
+            # patched answer must not outlive this block.
+            from core.config import _adc_default_project
+            _adc_default_project.cache_clear()
+            try:
+                with patch("google.auth.default", side_effect=Exception("No credentials")):
+                    with self.assertRaises(ValueError):
+                        get_llm_kwargs(
+                            model_id="vertex_ai/gemini-3.8-flash",
+                            config={"sandbox": {"options": {"project": "YOUR_PROJECT_ID"}}}
+                        )
+            finally:
+                _adc_default_project.cache_clear()
 
             # 4. Placeholder in env var is ignored and falls back to config
             with patch.dict(os.environ, {"VERTEXAI_PROJECT": "YOUR_PROJECT_ID", "GOOGLE_CLOUD_PROJECT": ""}):
@@ -4838,9 +4726,14 @@ class ShipAuditPreflightTests(unittest.TestCase):
             self.assertEqual(len(guidance.get("confirmed_vulnerabilities", [])), 1)
 
     def test_inject_active_findings_state_non_mutation_and_dedup(self):
-        """Item 5: Verify _inject_active_findings_state does not mutate session dicts in place and dedups cleanly."""
+        """Item 5: the findings snapshot lands once, scrubbed, and never mutates session history.
+
+        It is appended to the system instruction (stable bytes per stage, so
+        the prompt cache holds), never to tool results: rewriting a function
+        response in place would persist into the session and grow on replay.
+        """
         from google.genai import types
-        from core.config import ResilientLiteLlm
+        from core.config import FINDINGS_SNAPSHOT_HEADER, ResilientLiteLlm
 
         with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
             init_db(tmp.name)
@@ -4856,29 +4749,32 @@ class ShipAuditPreflightTests(unittest.TestCase):
             tok = current_run_context.set(ctx)
             try:
                 orig_resp = {"output": "original tool result"}
-                fr_part = types.Part(
-                    function_response=types.FunctionResponse(name="read_file", response=orig_resp)
-                )
-                content = types.Content(role="user", parts=[fr_part])
+                content = types.Content(role="user", parts=[types.Part(
+                    function_response=types.FunctionResponse(name="read_file", response=orig_resp))])
 
                 class MockReq:
                     contents = [content]
+                    config = types.GenerateContentConfig(system_instruction="Base prompt.")
 
                 req = MockReq()
+                before = content.model_dump()
                 ResilientLiteLlm._inject_active_findings_state(req)
+                instruction = str(req.config.system_instruction)
 
-                # 1. Original response dict MUST NOT be mutated in place
-                self.assertEqual(orig_resp["output"], "original tool result")
+                # 1. Session history is untouched: no tool result is rewritten.
+                self.assertEqual(orig_resp, {"output": "original tool result"})
+                self.assertEqual(req.contents[0].model_dump(), before)
 
-                # 2. Request part got state block with scrubbed title
-                new_resp = req.contents[0].parts[0].function_response.response
-                self.assertIn("[STATE STORE: RECORDED FINDINGS", str(new_resp))
-                self.assertNotIn("Multiline title\n", str(new_resp))
+                # 2. The snapshot is in the instruction, with the model-written
+                # title collapsed to one line (no forged prompt structure).
+                self.assertTrue(instruction.startswith("Base prompt."))
+                self.assertIn(FINDINGS_SNAPSHOT_HEADER, instruction)
+                self.assertIn("SQL Injection in Auth Multiline title", instruction)
+                self.assertNotIn("Multiline title\n", instruction)
 
-                # 3. Repeated dispatch dedup
+                # 3. Repeated dispatch adds nothing: one snapshot per stage.
                 ResilientLiteLlm._inject_active_findings_state(req)
-                count = str(req.contents[0].parts[0].function_response.response).count("[STATE STORE: RECORDED FINDINGS")
-                self.assertEqual(count, 1)
+                self.assertEqual(str(req.config.system_instruction).count(FINDINGS_SNAPSHOT_HEADER), 1)
             finally:
                 current_run_context.reset(tok)
 

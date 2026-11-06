@@ -29,7 +29,8 @@ resilience, and monitors long-running security pipelines.
   - `--snapshot_keep=<N>`: retention for pinned snapshots under
     `<state_root>/.mantis_snapshots/` (Block D step 6 GC). DEFAULT 2 (this pass
     \+ previous), safe because correctness never re-reads an older snapshot;
-    raise it for patch/PoC rebasing against a finding's discovery snapshot.
+    raise it for re-running an earlier pass's PoC against the snapshot it was
+    discovered on.
   - `--state_root=<absolute path>`: directory that contains `workspace/` and
     `.mantis_snapshots/`. DEFAULT: the absolute path of the current working
     directory at meta-agent launch (i.e., the parent of `workspace/`). If
@@ -65,8 +66,7 @@ resilience, and monitors long-running security pipelines.
     `active_snapshot`/`snapshot_history` for snapshot provenance and Block E
     PREV-reference).
   - Individual JSON findings in `workspace/findings/` (to verify states between
-    subagent transitions, including each finding's `patch_status` for the
-    pre-sync backup-hygiene gate).
+    subagent transitions).
   - `workspace/.workspace_edit.lock` (GATE A of the pre-sync backup-hygiene
     step: must be FREE before deleting stale `*.bak-*` files).
   - `CODE_ROOT/.mantis_snapshot_id` sentinel (the snapshot reuse/STOP check in
@@ -87,9 +87,9 @@ resilience, and monitors long-running security pipelines.
     `#/$defs/state`; they are optional and absent in MODE-OFF (no `--sync`).
   - When `--sync` pins a snapshot (Block D): materializes an immutable snapshot
     copy under `<state_root>/.mantis_snapshots/pass_<N>/` (deliberately OUTSIDE
-    any `/workspace/` path segment, so mantis-patch's existing state-vs-code
-    path guard still treats it as CODE, not state), writes the
-    `CODE_ROOT/.mantis_snapshot_id` sentinel, and `chmod -R a-w` the copy.
+    any `/workspace/` path segment, so the state-vs-code path guard still treats
+    it as CODE, not state), writes the `CODE_ROOT/.mantis_snapshot_id` sentinel,
+    and `chmod -R a-w` the copy.
 - **Preconditions**:
   - Target project must be identified. Campaign orchestration tools/subagents
     must be ready.
@@ -154,17 +154,16 @@ Execute your orchestration duties in a continuous loop:
 
      1. **SYNC (must be the very first action of the pass; `--sync` only).**
         First, **pre-sync backup hygiene** — remove stale `*.bak-*` files left
-        by an interrupted `@mantis-patch` run, but ONLY when it is safe:
+        by an interrupted run, but ONLY when it is safe:
 
         - GATE A: the workspace edit lock `workspace/.workspace_edit.lock` must
           be FREE (no patch in flight). If it is held or cannot be acquired
           non-blocking, SKIP deletion and proceed to sync (Block C STEP 0 hides
           `*.bak-*` from the dirty check anyway).
-        - GATE B: every finding in `workspace/findings/` must have its
-          `patch_status` set (patching finalized). If any finding is mid-patch
-          (no `patch_status`), SKIP deletion.
+        - GATE B: no finding in `workspace/findings/` may be mid-write. If any
+          finding JSON fails to parse, SKIP deletion.
         - SCOPE: delete only within the TARGET tree, never under Mantis state.
-          The glob MUST be narrow: `mantis-patch` only ever creates
+          The glob MUST be narrow: the pipeline only ever creates
           `<target>.bak-[finding_id]` where `finding_id` is a UUIDv4
           (`schema.json` `#/$defs/uuid`). The broad `*.bak-*` glob is FORBIDDEN
           for deletion — it would also match user files like
@@ -315,8 +314,8 @@ Execute your orchestration duties in a continuous loop:
            via `--snapshot_keep`, DEFAULT 2 = this pass + previous); delete
            older via the matching teardown (rm -rf for copies; git worktree
            remove/prune for worktrees). Correctness never reads an old snapshot,
-           so the default of 2 is safe; raise N when you want patch/PoC rebasing
-           to apply against a finding's discovery snapshot.
+           so the default of 2 is safe; raise N when you want to re-run an
+           earlier pass's PoC against a finding's discovery snapshot.
         7. CRASH-RESUME (Post-Check): if Step 0 did not trigger, and Block D
            returns `snapshot_pinned=false` (HALT mode), still write
            `active_snapshot` in Step 4 and still pass `--snapshot_root`/
@@ -474,11 +473,10 @@ Execute your orchestration duties in a continuous loop:
      exploit chains, outputting "Super Findings" into the `workspace/findings/`
      directory.
 
-   - **Stage 11 (Patch & Verify):** Call the `@mantis-patch` subagent to
-     generate fixes, and update files in the `workspace/findings/` directory.
-     Instruct it to repeatedly call a fresh `@mantis-reproduce` subagent against
-     its patches to attempt a bypass, refining the fix until the reproducer can
-     no longer bypass it.
+   - **Stage 11 (Variant Hunt):** Call a fresh `@mantis-reproduce --reattack`
+     subagent to try boundary-mutated variants of the PoC against the target,
+     and update files in the `workspace/findings/` directory. This asks whether
+     the defect generalizes, so the report can say how broadly it applies.
 
    - **Stage 12 (Calibrate):** Call the `@mantis-calibrate` subagent to read the
      `workspace/findings/` directory and append final calibration metrics to
@@ -491,10 +489,10 @@ Execute your orchestration duties in a continuous loop:
      `transcript.jsonl` files) of all subagents successfully executed during
      this round (every stage that ran: history, structural-index, summarize,
      architecture, threat-model, plan, researcher, dedupe, review, critic,
-     reproduce, chain, patch, calibrate) to the `@mantis-reflect` subagent.
-     Resolve these paths from whatever mechanism the ACTIVE coding-agent harness
-     exposes for per-subagent execution logs; do NOT hardcode any single
-     framework's layout. Harnesses differ — e.g. Antigravity stores them under
+     reproduce, chain, calibrate) to the `@mantis-reflect` subagent. Resolve
+     these paths from whatever mechanism the ACTIVE coding-agent harness exposes
+     for per-subagent execution logs; do NOT hardcode any single framework's
+     layout. Harnesses differ — e.g. Antigravity stores them under
      `<appDataDir>/brain/<conversation_id>/.system_generated/logs/transcript.jsonl`,
      while Gemini CLI, the Google ADK, Claude Code, and custom pipelines use
      different locations; Antigravity is ONE example, not the default. If your
@@ -509,14 +507,14 @@ Execute your orchestration duties in a continuous loop:
      `review_packet_pass_<N>_<snapshot_id>.md` so a re-used pass number on a
      different snapshot cannot overwrite a prior packet.
      `review_packet-latest.md` remains the stable entry point) containing only
-     reproduced findings, evidence, and patches.
+     reproduced findings and their evidence.
 
    - **Stage 15 (Archive & KB Verification):**
 
      1. **Call the `@mantis-architecture` subagent** to perform a final
         synthesis of the current round's findings (especially
         `"FALSE_POSITIVE"`, `"NON_VIABLE"`, `"SAMPLE_OR_TEST"`, and
-        `"VERIFIED_SECURE"`) into the permanent Markdown Knowledge Base
+        `"dynamic_confirmed"`) into the permanent Markdown Knowledge Base
         (`workspace/kb/`).
      2. Verify that the KB updates were successfully written and that
         `workspace/learnings.jsonl` was processed.
@@ -567,9 +565,9 @@ Execute your orchestration duties in a continuous loop:
      that subagent.
 
 3. **Monitoring & Reporting:** When the pipeline successfully reproduces a
-   security flaw or verifies a patch (reported by the `@mantis-patch` subagent),
-   or when `@mantis-calibrate` finishes its scoring, you may output a brief text
-   summary to the user.
+   security flaw (reported by the `@mantis-reproduce` subagent), or when
+   `@mantis-calibrate` finishes its scoring, you may output a brief text summary
+   to the user.
 
    - **Do NOT report findings that failed to reproduce
      (`repro_status: "failed_to_reproduce"`) as confirmed vulnerabilities.**

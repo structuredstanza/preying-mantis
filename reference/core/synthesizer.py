@@ -69,8 +69,6 @@ KNOWN_SKILLS: Set[str] = {
     "mantis-review",
     "mantis-critic",
     "mantis-reproduce",
-    "mantis-patch",
-    "mantis-coder",
     "mantis-calibrate",
     "mantis-report",
     "mantis-reflect",
@@ -78,7 +76,6 @@ KNOWN_SKILLS: Set[str] = {
     "mantis-chain",
     "mantis-history",
     "mantis-architecture",
-    "mantis-advise",
     "mantis-structural-index",
 }
 
@@ -95,7 +92,6 @@ VALID_STATUSES: Set[str] = {
     "discovered",
     "static_confirmed",
     "dynamic_confirmed",
-    "patch_verified",
     "reported",
 }
 
@@ -131,7 +127,7 @@ A valid workflow JSON has the following top-level structure:
    - "on_enter_status": (Optional) Monotonic database state stamp ("static_confirmed" or "dynamic_confirmed").
 
 2. Classifier Nodes ("type": "classifier"):
-   - "id": Unique Python identifier string (e.g. "review_decision", "race_check", "repro_decision").
+   - "id": Unique Python identifier string (e.g. "review_decision", "race_check", "critic_decision").
    - "routes": Array of possible routing outcomes (e.g. ["confirmed"], ["viable"], ["success"]).
    - "max_visits": Integer from 1 to 10 bounding loop iterations (use 1 for linear graphs, 2-3 for cyclic stress-testing loops).
 
@@ -156,7 +152,6 @@ A valid workflow JSON has the following top-level structure:
   * "query_lineage": Query vulnerability finding history and snapshot provenance.
 - Sandbox & Dynamic Execution Tools:
   * "run_sandbox": Run bash commands inside isolated container/VM sandbox.
-  * "apply_patch": Apply unified diff patch inside sandbox.
   * "run_sandbox_with_evidence": Execute exploit PoC and verify reached-sink sentinel or crash trace.
 - Structural Navigation Tools (deterministic, backed by the tree-sitter catalog; degrade to a baseline-tools pointer when the index is absent):
   * "find_symbol": Locate symbol definitions by name across the target.
@@ -166,8 +161,8 @@ A valid workflow JSON has the following top-level structure:
 
 ### KNOWN STANDARD SKILLS:
 "mantis-threat-model", "mantis-researcher", "mantis-dedupe", "mantis-review", "mantis-critic",
-"mantis-reproduce", "mantis-coder", "mantis-patch", "mantis-calibrate", "mantis-report", "mantis-reflect",
-"mantis-plan", "mantis-chain", "mantis-history", "mantis-architecture", "mantis-advise", "mantis-structural-index".
+"mantis-reproduce", "mantis-calibrate", "mantis-report", "mantis-reflect",
+"mantis-plan", "mantis-chain", "mantis-history", "mantis-architecture", "mantis-structural-index".
 
 ### GRAPH TOPOLOGY & ROUTING RULES:
 1. START Edge: Workflow MUST begin with {"from": "START", "to": "<first_node>"}. No "on" allowed on START edge.
@@ -219,8 +214,6 @@ Example 2: Concurrency & TOCTOU Race Condition Audit (Bounded Cyclic Loop)
     {"id": "threat_model", "type": "agent", "skill": "mantis-threat-model", "tools": ["read_file", "list_files", "record_threat_model"]},
     {"id": "race_analyzer", "type": "agent", "system_prompt": "Audit file descriptor operations and shared memory for TOCTOU race windows.", "tools": ["read_file", "list_files", "report_findings", "get_findings"]},
     {"id": "race_reproducer", "type": "agent", "skill": "mantis-reproduce", "tools": ["run_sandbox_with_evidence", "read_file", "write_file", "get_findings"], "output_schema": "ReproVerdict", "output_key": "verdict"},
-    {"id": "repro_decision", "type": "classifier", "routes": ["success"], "max_visits": 3},
-    {"id": "patcher", "type": "agent", "skill": "mantis-patch", "tools": ["apply_patch", "run_sandbox_with_evidence", "read_file", "write_file", "get_findings"]},
     {"id": "calibrator", "type": "agent", "skill": "mantis-calibrate", "tools": ["get_findings", "calibrate_finding", "score_risk", "read_file"]},
     {"id": "reporter", "type": "agent", "skill": "mantis-report", "tools": ["get_findings", "generate_report", "read_file"]}
   ],
@@ -228,10 +221,7 @@ Example 2: Concurrency & TOCTOU Race Condition Audit (Bounded Cyclic Loop)
     {"from": "START", "to": "threat_model"},
     {"from": "threat_model", "to": "race_analyzer"},
     {"from": "race_analyzer", "to": "race_reproducer"},
-    {"from": "race_reproducer", "to": "repro_decision"},
-    {"from": "repro_decision", "to": "patcher", "on": "success"},
-    {"from": "repro_decision", "to": "calibrator", "on": "__DEFAULT__"},
-    {"from": "patcher", "to": "calibrator"},
+    {"from": "race_reproducer", "to": "calibrator"},
     {"from": "calibrator", "to": "reporter"}
   ]
 }
@@ -288,21 +278,18 @@ DOMAIN_ARCHETYPES: Dict[str, Dict[str, Any]] = {
         "keywords": ["kernel", "ioctl", "driver", "syscall", "kasan", "ebpf", "memory corruption"],
         "researcher_tools": ["read_file", "list_files", "report_findings", "get_findings", "get_threat_model", "record_threat_model"],
         "reproducer_tools": ["run_sandbox", "run_sandbox_with_evidence", "read_file", "write_file", "get_findings"],
-        "patcher_tools": ["apply_patch", "run_sandbox", "run_sandbox_with_evidence", "read_file", "write_file", "get_findings", "get_security_guidance", "query_lineage"],
         "sandbox_type": "gvisor",
     },
     "cloud_iam": {
         "keywords": ["cloud", "iam", "aws", "gcp", "azure", "privilege escalation", "permission", "rbac", "policy"],
         "researcher_tools": ["read_file", "list_files", "report_findings", "get_findings", "get_threat_model", "record_threat_model", "get_security_guidance"],
         "reproducer_tools": ["run_sandbox", "run_sandbox_with_evidence", "read_file", "write_file", "get_findings"],
-        "patcher_tools": ["apply_patch", "read_file", "write_file", "get_findings", "get_security_guidance", "query_lineage"],
         "sandbox_type": "static-only",
     },
     "web_api": {
         "keywords": ["web", "api", "rest", "graphql", "jwt", "sqli", "xss", "ssrf", "auth", "endpoint"],
         "researcher_tools": ["read_file", "list_files", "report_findings", "get_findings", "get_threat_model", "record_threat_model"],
         "reproducer_tools": ["run_sandbox", "run_sandbox_with_evidence", "read_file", "write_file", "get_findings"],
-        "patcher_tools": ["apply_patch", "run_sandbox", "run_sandbox_with_evidence", "read_file", "write_file", "get_findings", "get_security_guidance", "query_lineage"],
         "sandbox_type": "microsandbox",
     },
 }
@@ -538,10 +525,6 @@ class ResearchGraphSynthesizer:
             "reproducer_tools",
             ["run_sandbox", "run_sandbox_with_evidence", "read_file", "write_file", "get_findings"],
         ))
-        patcher_tools = list(cfg_archetype.get(
-            "patcher_tools",
-            ["apply_patch", "run_sandbox", "run_sandbox_with_evidence", "read_file", "write_file", "get_findings", "get_security_guidance", "query_lineage"],
-        ))
         # Sandbox selection, per section 5.4. An explicit operator choice is honoured
         # unchanged. Otherwise the archetype's preferred backend is a REQUEST, and what
         # it is clamped against depends on where the archetype came from:
@@ -580,7 +563,6 @@ class ResearchGraphSynthesizer:
         if final_sandbox_type == "static-only":
             researcher_tools = [t for t in researcher_tools if t not in ("run_sandbox", "run_sandbox_with_evidence")]
             reproducer_tools = [t for t in reproducer_tools if t not in ("run_sandbox", "run_sandbox_with_evidence")]
-            patcher_tools = [t for t in patcher_tools if t not in ("run_sandbox", "run_sandbox_with_evidence")]
 
         budget_dict = dataclasses.asdict(budget_config) if budget_config else dataclasses.asdict(BudgetConfig())
 
@@ -681,22 +663,9 @@ class ResearchGraphSynthesizer:
                 "type": "agent",
                 "skill": "mantis-reproduce",
                 "tools": reproducer_tools,
-                "on_enter_status": "static_confirmed",
+                "on_enter_status": "dynamic_confirmed",
                 "output_schema": "ReproVerdict",
                 "output_key": "verdict",
-            },
-            {
-                "id": "repro_decision",
-                "type": "classifier",
-                "routes": ["success"],
-                "max_visits": 1,
-            },
-            {
-                "id": "patcher",
-                "type": "agent",
-                "skill": "mantis-coder",
-                "tools": patcher_tools,
-                "on_enter_status": "dynamic_confirmed",
             },
             {
                 "id": "calibrator",
@@ -727,10 +696,7 @@ class ResearchGraphSynthesizer:
             {"from": "critic", "to": "review_decision"},
             {"from": "review_decision", "to": "reproducer", "on": "viable"},
             {"from": "review_decision", "to": "calibrator", "on": "__DEFAULT__"},
-            {"from": "reproducer", "to": "repro_decision"},
-            {"from": "repro_decision", "to": "patcher", "on": "success"},
-            {"from": "repro_decision", "to": "calibrator", "on": "__DEFAULT__"},
-            {"from": "patcher", "to": "calibrator"},
+            {"from": "reproducer", "to": "calibrator"},
             {"from": "calibrator", "to": "reporter"},
             {"from": "reporter", "to": "reflector"},
         ]
@@ -950,7 +916,10 @@ class ResearchGraphSynthesizer:
                     elif "repro" in clean_id:
                         skill = "mantis-reproduce"
                     elif any(k in clean_id for k in ("patch", "coder", "remediat")):
-                        skill = "mantis-coder"
+                        # Patching is not part of this tool: a node the model
+                        # named for it is routed to the reproducer, which is
+                        # the stage that establishes whether a finding is real.
+                        skill = "mantis-reproduce"
                     elif "review" in clean_id:
                         skill = "mantis-review"
                     elif "critic" in clean_id:
@@ -979,7 +948,7 @@ class ResearchGraphSynthesizer:
                     if "list_files" not in clean_tools:
                         clean_tools.append("list_files")
 
-                # Ensure get_findings for downstream review / reproduction / patching
+                # Ensure get_findings for downstream review / reproduction
                 if any(k in clean_id for k in ("review", "critic", "dedupe", "repro", "patch", "calibrat", "report", "reflect")):
                     if "get_findings" not in clean_tools:
                         clean_tools.append("get_findings")
@@ -1002,9 +971,12 @@ class ResearchGraphSynthesizer:
                 on_enter_status = n.get("on_enter_status")
                 if on_enter_status and on_enter_status not in NODE_STAMP_STATUSES:
                     on_enter_status = None
-                if ("repro" in clean_id or (skill and "reproduce" in skill)) and not on_enter_status:
-                    on_enter_status = "static_confirmed"
-                elif ("patch" in clean_id or (skill and "patch" in skill)) and not on_enter_status:
+                # The reproducer owns the dynamic stamp: it is the node whose
+                # PoC reaching the sink is what `dynamic_confirmed` means. A
+                # node the model named for patching is routed to the reproducer
+                # above, so it carries the same stamp. Nothing else may stamp.
+                if ("repro" in clean_id or (skill and "reproduce" in skill)
+                        or "patch" in clean_id or (skill and "patch" in skill)) and not on_enter_status:
                     on_enter_status = "dynamic_confirmed"
 
                 # Gate 6: Node-level Model & Reasoning Sanitization

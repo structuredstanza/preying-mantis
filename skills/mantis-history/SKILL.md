@@ -191,12 +191,11 @@ Execute the history analysis stage as follows:
      security-relevant, the script should retrieve the commit diffs and
      messages/change descriptions.
 
-   - **LLM/Agent Analysis:** The script should make API calls (e.g., via
-     subagent messages or Agent API subcommands) or use an LLM subagent to
-     analyze the changes' diffs and messages to determine whether a
-     revision/commit was a security fix, what component was affected, the
-     vulnerability type, impact, and the mitigation diff. Make sure it uses
-     batching and caching to minimize API calls.
+   - **LLM/Agent Analysis:** The script should make API calls (e.g. via subagent
+     messages or Agent API subcommands) or use an LLM subagent to analyze the
+     changes' diffs and messages to determine whether a revision/commit was a
+     security fix, what component was affected, the vulnerability type, and the
+     impact. Make sure it uses batching and caching to minimize API calls.
 
    - **Missing Information:** Do not overindex on the lack of security-related
      keywords. Many security fixes do not get CVEs, and many security
@@ -215,7 +214,6 @@ Execute the history analysis stage as follows:
   "description": "...",
   "code_paths": ["file:line_number"],
   "vuln_type": "...",
-  "mitigation_diff": "...",
   "cve": "...",
   "history": [
     {

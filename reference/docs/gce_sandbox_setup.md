@@ -1,8 +1,7 @@
 # Hardened GCE VM Sandbox Setup & Isolation Guide
 
 This guide describes how to provision, harden, and verify a Google Compute
-Engine (GCE) VM sandbox for dynamic exploit reproduction and patch verification
-in Mantis.
+Engine (GCE) VM sandbox for dynamic exploit reproduction in Mantis.
 
 An automated idempotent setup script is provided at
 [`reference/scripts/setup_gce_sandbox.sh`](../scripts/setup_gce_sandbox.sh):

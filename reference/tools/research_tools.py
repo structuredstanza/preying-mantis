@@ -35,15 +35,15 @@ from core.database import (
 )
 from core.context import current_run_context
 from core.environments.static_env import PROTECTED_VCS_DIRS, PROTECTED_METADATA_FILES
-from core.llm_gateway import wrap_untrusted_content, safe_markdown_fence, safe_markdown_inline
+from core.llm_gateway import wrap_untrusted_content, safe_markdown_inline
 from core.truncation import split_truncation, truncation_marker
 
 logger = logging.getLogger(__name__)
 
 # Every cut below is announced through core.truncation so a reader can tell
 # the harness's cut from the target's content. Must stay >= 10_000: these
-# outputs are read by the verdict stages (reviewer, critic, reproducer,
-# patcher), and a cut tight enough to hide the bounds check it was looking
+# outputs are read by the verdict stages (reviewer, critic, reproducer),
+# and a cut tight enough to hide the bounds check it was looking
 # for reads as "the check is missing".
 MAX_READ_SIZE = 1024 * 1024  # 1 MiB
 
@@ -1115,9 +1115,7 @@ def report_findings(report: VulnerabilityReport) -> str:
                 elif isinstance(f, dict):
                     f["filepath"] = single_target_rel
 
-        write_findings(ctx.db_path, ctx.target_file, findings, run_id=ctx.run_id,
-                       verified_evidence=bool(getattr(ctx, "sandbox_executed", False)),
-                       finding_evidence=dict(getattr(ctx, "finding_evidence", None) or {}))
+        write_findings(ctx.db_path, ctx.target_file, findings, run_id=ctx.run_id)
         return f"SUCCESS: Saved {len(findings)} finding(s) to database."
     except Exception as e:
         return f"ERROR SAVING DB: {e}"
@@ -1139,11 +1137,13 @@ _RUN_WIDE_FINDINGS_NODES = frozenset({"reporter", "chainer"})
 _FINDING_INDEX_FIELDS = ("id", "filepath", "title", "severity", "status", "cwe", "mantis_risk_score")
 
 # A full-record payload larger than this falls back to the index for the
-# closed findings (dismissed, merged, mitigated), newest-first full records
+# closed findings (dismissed, merged, legacy closures), newest-first full records
 # for the rest. Characters of JSON, about a quarter of the compaction
 # threshold in tokens, so one tool response can never trip it alone.
 GET_FINDINGS_FULL_CHARS = 400_000
 
+# "mitigated" is legacy: earlier versions closed a finding when a later run
+# found its path closed. Kept so those rows still read as closed.
 _CLOSED_FINDING_STATUSES = frozenset({
     "false_positive", "non_viable", "duplicate_merged", "mitigated", "archived",
 })
@@ -2007,10 +2007,6 @@ def query_lineage(signature: str = "", lineage_id: str = "", filepath: str = "")
                 lines.append(f"  - **CWE**: {r.get('cwe')}")
             if r.get("triage_reasoning"):
                 lines.append(f"  - **Triage Reasoning**: {r.get('triage_reasoning')}")
-            if r.get("patch_status"):
-                lines.append(f"  - **Patch Status**: `{r.get('patch_status')}`")
-            if r.get("patch_diff"):
-                lines.append(f"  - **Patch Diff**:\n{safe_markdown_fence(r.get('patch_diff').strip(), lang='diff')}")
         return "\n".join(lines)
     except Exception as e:
         return f"ERROR QUERYING LINEAGE: {e}"

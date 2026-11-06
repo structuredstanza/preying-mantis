@@ -9,12 +9,12 @@
 > requirements.
 
 > [!IMPORTANT] **RESPONSIBLE USE** AI models are non-deterministic and can
-> hallucinate findings or generate incorrect patches. **All findings must be
-> manually verified by a security expert before being reported.** Do not
-> mass-file unverified, AI-generated reports to open-source maintainers. A
-> failure to automatically reproduce a vulnerability does not definitively mean
-> it is a false positive, nor does a successful reproducer guarantee the bug is
-> exploitable in all contexts. Use these skills responsibly.
+> hallucinate findings. **All findings must be manually verified by a security
+> expert before being reported.** Do not mass-file unverified, AI-generated
+> reports to open-source maintainers. A failure to automatically reproduce a
+> vulnerability does not definitively mean it is a false positive, nor does a
+> successful reproducer guarantee the bug is exploitable in all contexts. Use
+> these skills responsibly.
 
 This document is the canonical reference guide for AI Agents operating in this
 workspace. It describes the Mantis pipeline architecture, the individual skills
@@ -126,8 +126,7 @@ graph TD
         Rev --> Cri["/mantis-critic (Viability Critic)"]
         Cri --> Rep["/mantis-reproduce (Reproducer)"]
         Rep --> Cha["/mantis-chain (Chainer)"]
-        Cha --> Pat["/mantis-patch (Patcher)"]
-        Pat --> Cal["/mantis-calibrate (Calibrator)"]
+        Cha --> Cal["/mantis-calibrate (Calibrator)"]
         Cal --> Ref["/mantis-reflect (Reflector)"]
         Ref --> Rpt["/mantis-report (Reporter)"]
         Rpt -.->|Next Loop Iteration| Arch
@@ -151,9 +150,7 @@ graph TD
     Rev --> Cri
     Cri --> Rep
     Rep --> Cha
-    Cha --> Pat
-    Pat -.->|Re-attack Bypass Loop| Rep
-    Pat --> Cal
+    Cha --> Cal
     Cal --> Ref
     Ref --> Rpt
 
@@ -180,12 +177,10 @@ graph TD
     Rep -.->|Updates| FileFind
     Cha -.->|Reads| FileKB
     Cha -.->|Creates| FileFind
-    Pat -.->|Updates| FileFind
     Cal -.->|Updates| FileFind
 
     Ref -.->|Parses Trajectories & Appends| FileLearn
     Cri -.->|Appends| FileLearn
-    Pat -.->|Appends| FileLearn
 
     Rpt -.->|Reads| FileFind
     Rpt -.->|Generates| FileRpt
@@ -251,27 +246,19 @@ graph TD
     multi-step exploit chains, creating new "Super Findings" in
     `workspace/findings/`.
 
-12. **`/mantis-patch` (Patcher):** Acts as an impartial remediation conductor
-    with strict separation of duties. Delegates code synthesis to isolated
-    patch-author subagents, commissions objective third-party re-attackers using
-    parallel trajectory search for adversarial attack generation, verifies fixes
-    in isolated sandboxes, updates patch status in
-    `workspace/findings/<id>.json`, and appends logs to
-    `workspace/learnings.jsonl`.
-
-13. **`/mantis-calibrate` (Risk Calibrator):** Calculates a final numerical
+12. **`/mantis-calibrate` (Risk Calibrator):** Calculates a final numerical
     Mantis Risk Score (1-10) for each finding in the workspace directory based
     on impact, evidence, and viability, appending the results directly to each
     `workspace/findings/<id>.json` file.
 
-14. **`/mantis-reflect` (Reflector):** Parses the execution trajectories of the
+13. **`/mantis-reflect` (Reflector):** Parses the execution trajectories of the
     agents from the current round, extracting false assumptions, tool failures,
     and successes, and appends these structured insights to the
     `workspace/learnings.jsonl` inbox.
 
-15. **`/mantis-report` (Reporter):** Generates a human-readable security review
-    packet containing verified/reproduced findings, evidence, risk rationales,
-    and patch information at `workspace/report/review_packet-latest.md`.
+14. **`/mantis-report` (Reporter):** Generates a human-readable security review
+    packet containing verified/reproduced findings, evidence and risk rationales
+    at `workspace/report/review_packet-latest.md`.
 
 ### Auxiliary & Operational Skills
 
@@ -283,11 +270,6 @@ graph TD
   ([`reference/skills/mantis-launch/SKILL.md`](reference/skills/mantis-launch/SKILL.md))
   Validates the environment, performs preflight checks, and executes the
   pipeline with automatic sandbox downgrade fallback.
-- **`/mantis-advise` (Developer Security Advisor):**
-  ([`skills/mantis-advise/SKILL.md`](skills/mantis-advise/SKILL.md)) Queries
-  threat models, historical vulnerability lineages, verified patch diffs,
-  triaged false positives, and learned trajectory invariants from `knowledge.db`
-  before and during code edits.
 
 ### Running the Pipeline (Manual Mode)
 
@@ -331,16 +313,13 @@ terminal:
 # 9. Combine validated findings into multi-step exploit chains
 /mantis-chain
 
-# 10. Apply minimal fixes and verify they block the crash reproducer
-/mantis-patch
-
-# 11. Calculate final matrix risk ratings and append to findings
+# 10. Calculate final matrix risk ratings and append to findings
 /mantis-calibrate
 
-# 12. Extract insights from execution trajectories to learnings inbox
+# 11. Extract insights from execution trajectories to learnings inbox
 /mantis-reflect
 
-# 13. Generate human-readable security review packet report
+# 12. Generate human-readable security review packet report
 /mantis-report
 ```
 
@@ -386,17 +365,17 @@ deduplication, while a tree that actually changed does not.
 
 **Findings are pinned to their discovery snapshot.** Each finding records a
 `discovery_commit` — the `SNAPSHOT_ID` it was found against. Trusting decisions
-(dedupe filtering, false-positive / non-viable verdicts, reproduction, patching,
-chaining) proceed only when a finding's `discovery_commit` **exactly equals**
-the current `SNAPSHOT_ID`. A finding discovered against a different or absent
-snapshot is re-researched / re-verified — never silently filtered, dropped, or
-marked secure.
+(dedupe filtering, false-positive / non-viable verdicts, reproduction, chaining)
+proceed only when a finding's `discovery_commit` **exactly equals** the current
+`SNAPSHOT_ID`. A finding discovered against a different or absent snapshot is
+re-researched / re-verified — never silently filtered, dropped, or marked
+secure.
 
 **Edits made mid-pass are ignored.** Because every stage reads the pinned copy,
 changes to the live tree *during* a pass cannot shift line numbers, break
-reproducers, or corrupt patches within that pass. Builds and generated artifacts
-are written to a private temporary shadow, never under the pinned root. New code
-is picked up at the **next** pass boundary.
+reproducers within that pass. Builds and generated artifacts are written to a
+private temporary shadow, never under the pinned root. New code is picked up at
+the **next** pass boundary.
 
 **Boundary sync is non-destructive and only at a pass boundary.** When enabled,
 sync is the first action of a pass and runs only when `workspace/findings/` is
@@ -418,7 +397,7 @@ new pass.
 - **Unpinned / Single-Pass** (`active_snapshot` ABSENT — plain interactive /
   manual use, or an orchestrator that does not implement multi-pass lifecycle):
   the stage does **not** stop. It runs as a point-in-time review of the current
-  directory with **all verdicts permitted** (`VERIFIED_SECURE`,
+  directory with **all verdicts permitted** (`dynamic_confirmed`,
   `failed_to_reproduce`, `DUPLICATE`, etc. are all emittable). Every snapshot
   match check reports "not matched" (no `active_snapshot` to compare against).
   Mid-run edits are not frozen.
@@ -427,10 +406,9 @@ new pass.
   was requested but the snapshot could not be pinned: live endpoint,
   too-big-to-copy, copy failure, dirty/racing tree): the stage does **not**
   stop, but runs **degraded**: results are non-authoritative, and no
-  authoritative `VERIFIED_SECURE` / `failed_to_reproduce` verdict is emitted
-  (the HALT ceiling forces `not_attempted` / `VERIFICATION_INCOMPLETE` instead).
-  Live-endpoint or uncopyable targets run in HALT by design when `--sync` is
-  requested.
+  authoritative `dynamic_confirmed` / `failed_to_reproduce` verdict is emitted
+  (the HALT ceiling forces `not_attempted` instead). Live-endpoint or uncopyable
+  targets run in HALT by design when `--sync` is requested.
 
 **Absent → conservative (backward compatible).** Every new field is optional.
 Any absent / empty / null new field routes to the safe branch: absent
@@ -452,8 +430,7 @@ existing workspaces and pre-upgrade findings validate and run unchanged.
 - **Flags every stage accepts**: `--snapshot_root=<pinned copy>`,
   `--snapshot_id=<SNAPSHOT_ID>`, `--state_root=<workspace parent>`, and
   (orchestrator only) `--sync` to enable boundary sync. `--target_root`
-  overrides all of these when a caller hands a stage a prepared tree (for
-  example, a patched shadow during re-attack verification).
+  overrides all of these when a caller hands a stage a prepared tree.
 
 Any conformant harness (CLI, ADK, or a custom deterministic pipeline) implements
 this per pass: sync first, detect VCS and compute `SNAPSHOT_ID`, pin the
@@ -533,12 +510,11 @@ even for targets the index builder cannot parse. See
 record.
 
 > **Note on Standalone vs. Harness Mode:** When using Mantis Skills directly
-> from the CLI in standalone mode, skills like `/mantis-review` or
-> `/mantis-patch` will instruct the LLM to write temporary reusable Python
-> scripts to update the JSON state files. However, in a true programmatic
-> harness, your orchestrator should override these instructions and provide
-> native tool calls or functions for state management to avoid forcing the LLM
-> to write one-off scripts.
+> from the CLI in standalone mode, skills like `/mantis-review` will instruct
+> the LLM to write temporary reusable Python scripts to update the JSON state
+> files. However, in a true programmatic harness, your orchestrator should
+> override these instructions and provide native tool calls or functions for
+> state management to avoid forcing the LLM to write one-off scripts.
 
 ### The ADK Reference Implementation (`reference/`)
 
@@ -571,7 +547,7 @@ Mantis architecture:
 3. **Pluggable Sandboxed Environments (`core/sandboxes/`)**:
 
    - **`StaticOnlyEnvironment` (`"static-only"`)**: Safe static analysis only;
-     dynamic crash reproduction and patch verification are skipped.
+     dynamic crash reproduction is skipped.
    - **`GvisorEnvironment` (`"gvisor"`)**: OCI container isolation via
      Docker/Podman and gVisor `runsc` with `--network=none`.
    - **`MicrosandboxEnvironment` (`"microsandbox"`)**: In-process hardware
@@ -606,21 +582,16 @@ Mantis architecture:
    - **`scripts/launch.py` (`./run.sh` / `mantis-launch`)**: Autonomous runner
      with preflight sanity checks and graceful sandbox downgrade handling (see
      [`reference/skills/mantis-launch/SKILL.md`](reference/skills/mantis-launch/SKILL.md)).
-   - **`scripts/advise.py` (`mantis-advise`)**: Developer security advisor
-     querying threat models, historical lineages, and verified patch diffs.
 
-6. **Open Knowledge Format (OKF v0.2) Semantics (`core/database.py` /
-   `scripts/advise.py`)**:
+6. **Open Knowledge Format (OKF v0.2) Semantics (`core/database.py`)**:
 
    - **`okf_concepts` Storage**: SQLite schema version 3 stores scoped concepts,
      YAML frontmatter, and canonical trust tiers (`unverified`, `heuristic`,
      `machine_confirmed`, `human_reviewed`) per OKF spec §5.3.
    - **Bundle Import/Export**: Bi-directional OKF bundle exchange
-     (`export_okf_bundle` / `import_okf_bundle`) with CLI support
-     (`scripts/advise.py --export-okf <dir>` and `--import-okf <dir>`).
+     (`export_okf_bundle` / `import_okf_bundle`).
    - **Contextual Advisory Dossiers**: Generates scoped security guidance with
-     trust badges, threat boundaries, guardrail invariants, and few-shot
-     verified patch diffs.
+     trust badges, threat boundaries and guardrail invariants.
 
 7. **Tamper-Proof Hermetic Dependencies (`requirements.txt` / `install.sh`)**:
 
@@ -631,11 +602,11 @@ Mantis architecture:
 
 ### Why Build a Programmatic Harness?
 
-- **Determinism:** Some stages such as the reproduction agent or patch agent
-  include recommendations to have subagents criticize the repro or patch. While
-  it is reasonable to demonstrate the overall workflow, a more deterministic
-  critic stage that the agent cannot bypass by "forgetting" to call the critic
-  subagent will likely produce better results.
+- **Determinism:** Some stages such as the reproduction agent include
+  recommendations to have subagents criticize the repro. While it is reasonable
+  to demonstrate the overall workflow, a more deterministic critic stage that
+  the agent cannot bypass by "forgetting" to call the critic subagent will
+  likely produce better results.
 - **Mitigates Prompt Injection Risk:** An LLM orchestrating shell commands is
   susceptible to host-level prompt injection if it ingests malicious code.
   Moving the orchestration to a hardened deterministic pipeline removes the
@@ -670,9 +641,9 @@ deterministic execution, you can build a pipeline that:
    newly updated `workspace/plan.json`, effectively allowing the AI to guide the
    deterministic runner on what to analyze next.
 3. **Hardcodes the Execution Sandbox:** You can optionally configure the
-   deterministic versions of `/mantis-reproduce` and `/mantis-patch` to *only
-   generate* the patch or script file, leaving the actual execution and grading
-   to your harness in a strictly controlled sandbox.
+   deterministic version of `/mantis-reproduce` to *only generate* the script
+   file, leaving the actual execution and grading to your harness in a strictly
+   controlled sandbox.
 
 ______________________________________________________________________
 
@@ -694,33 +665,26 @@ end-to-end reproduction scripts for these chains**.
 
 ______________________________________________________________________
 
-## Patch Verification and Re-attack Constraints
+## Reproduction and Re-attack Constraints
 
-The `schema.json` contract defines validation rules for findings that have been
-patched. While `/mantis-patch` is designed to verify patches using a re-attack
-step (confirming `reattack_status`), the schema supports several distinct
-verification outcome statuses:
+The `schema.json` contract defines the evidence rules for a finding's status.
+This toolkit reports defects; it does not author or verify patches.
 
-- **`VERIFIED_SECURE`**: Completed verification, meaning the post-patch run
-  passed AND a successful variant-hunting re-attack was executed. The
-  independent re-attack agent authors N ≥ 3 boundary-mutated variant inputs
-  (off-by-one around the fixed bound, len±1, sign flips, alternate paths to the
-  same sink for memory-safety bugs; equivalent payloads and alternate endpoints
-  for non-memory-safety bugs) and the patched shadow must survive ALL of them
-  before `VERIFIED_SECURE` is set. An empty or short variant set caps at
-  `VERIFICATION_INCOMPLETE` — a vacuous "all zero variants failed" never
-  qualifies. A variant only counts as a bypass if it reproduces the original
-  vulnerability class (same sink/crash type); junk mutants are discarded.
-- **`MITIGATION_PROPOSED`**: Set for binary targets where code patching is not
-  possible but a functional or architectural mitigation is proposed in
-  `patch_diff`. These may bypass code modification and re-attack checks.
-- **`VERIFICATION_INCOMPLETE`**: Set when the initial post-patch verification
-  run passed but the subsequent re-attack checks were interrupted or failed due
-  to environment timeouts, infrastructure errors, or sandbox limits.
+- **`dynamic_confirmed`**: A PoC reached the sink. The completion stamp is
+  written per finding, from that finding's own reached-sink evidence — one
+  reproduced finding never upgrades the rest of the campaign.
+- **`static_confirmed`**: A stage validated the data flow by reading the code,
+  and no PoC reached a sink. This is what a finding keeps when the reproducer
+  tried it and could not confirm it.
+- **`reported`**: The researcher reported it and nothing has confirmed it yet.
 
-Re-attack fields (`reattack_status`, etc.) are strictly required only when
-`patch_status` is `VERIFIED_SECURE`. This is an intentional design decision to
-support binary-only targets and verification fallbacks.
+Variant hunting (`--reattack`) answers a separate question: does this defect
+class generalize beyond the input that first triggered it? Its verdict is
+`reattack_status` — `generalizes`, `isolated`, or
+`inconclusive_baseline_changed` — and it never gates a status. An `isolated`
+verdict requires ≥ 3 valid variant inputs; an empty or short set is recorded as
+`inconclusive_baseline_changed` instead, because "all zero variants failed" is
+vacuously true and proves nothing.
 
 ______________________________________________________________________
 
@@ -775,7 +739,7 @@ pipeline.
   natively using workflow nodes or CLI subagent delegation.
 - **Persistence:** It operates across passes and restarts using state
   checkpoints, ensuring that the review continues working towards the goal of
-  security flaw discovery, patching, and reporting.
+  security flaw discovery, reproduction, and reporting.
 - **Supervision:** It monitors task health, handles environmental degradation
   gracefully, logs invariants, and ensures the pipeline remains operational.
 - **Interactive Steering:** You can query pipeline status, inspect
@@ -809,8 +773,7 @@ need to use the heaviest, most advanced frontier models for every stage:
   frontier models.
 - **Tier 2 (Deep Reasoning):** Save your most powerful, heavy-reasoning flagship
   models for the highly complex stages that demand deep context and zero-shot
-  problem solving: `/mantis-reproduce` (writing functional crash reproducers)
-  and `/mantis-patch` (writing side-effect-free codebase fixes).
+  problem solving: `/mantis-reproduce` (writing functional crash reproducers).
 - **Tip:** For very large repositories, configure your plan `/mantis-plan` to
   focus on specific high-risk subfolders (e.g. `src/crypto/` or `api/`) to keep
   the scan focused and efficient.
@@ -864,7 +827,7 @@ three tiers:
      frontmatters correct? Do they define the required tools? Are the system
      prompts within the context window limits?
 2. **Tier 2: Isolated "Unit" Evals**
-   - **What it is:** Evaluating a single skill (e.g., `/mantis-patch`) in a
+   - **What it is:** Evaluating a single skill (e.g., `/mantis-reproduce`) in a
      vacuum, entirely decoupled from the rest of the pipeline.
    - **The Setup:** Feed a static, hardcoded input (a mocked `findings.json` and
      a target file) to a single skill and observe its output.
@@ -928,12 +891,12 @@ token investment:
   the Tier 2 "Unit" Evals to verify if the cheaper model degrades the success
   rate before rolling it out.
 - **Evaluate Parallel Trajectories:** If you implement parallel trajectory
-  search (e.g., spawning multiple `Researchers` or `Patchers`), test different
-  numbers of concurrent agents (e.g., 2, 3, or 5). If running parallel
+  search (e.g., spawning multiple `Researchers` or `Reproducers`), test
+  different numbers of concurrent agents (e.g., 2, 3, or 5). If running parallel
   researchers always results in them finding the exact same vulnerabilities,
   then the parallelization is not yielding unique value and is just burning
-  tokens. Conversely, if parallel patchers consistently produce a much cleaner,
-  more idiomatic fix than a single agent, the compute cost can be justified.
+  tokens. Conversely, if parallel reproducers consistently reach a sink that a
+  single agent missed, the compute cost can be justified.
 
 ______________________________________________________________________
 

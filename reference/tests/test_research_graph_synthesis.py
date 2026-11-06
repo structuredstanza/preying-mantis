@@ -112,7 +112,6 @@ class TestResearchGraphSynthesis(unittest.TestCase):
         self.assertIn("researcher", node_ids)
         self.assertIn("reviewer", node_ids)
         self.assertIn("reproducer", node_ids)
-        self.assertIn("patcher", node_ids)
         self.assertIn("reflector", node_ids)
 
         # Verify edge connectivity
@@ -292,12 +291,6 @@ class TestResearchGraphSynthesis(unittest.TestCase):
                     "max_visits": 3,
                 },
                 {
-                    "id": "patcher",
-                    "type": "agent",
-                    "skill": "mantis-patch",
-                    "tools": ["apply_patch", "run_sandbox_with_evidence", "read_file", "write_file", "get_findings"],
-                },
-                {
                     "id": "calibrator",
                     "type": "agent",
                     "skill": "mantis-calibrate",
@@ -315,9 +308,8 @@ class TestResearchGraphSynthesis(unittest.TestCase):
                 {"from": "threat_model", "to": "concurrency_analyzer"},
                 {"from": "concurrency_analyzer", "to": "race_stress_reproducer"},
                 {"from": "race_stress_reproducer", "to": "race_classifier"},
-                {"from": "race_classifier", "to": "patcher", "on": "success"},
+                {"from": "race_classifier", "to": "calibrator", "on": "success"},
                 {"from": "race_classifier", "to": "calibrator", "on": "__DEFAULT__"},
-                {"from": "patcher", "to": "calibrator"},
                 {"from": "calibrator", "to": "reporter"},
             ],
         }

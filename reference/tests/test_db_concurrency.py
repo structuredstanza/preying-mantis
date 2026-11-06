@@ -169,7 +169,7 @@ class BusyTimeoutTest(unittest.TestCase):
 
         offenders = []
         for rel in ("core/database.py", "core/cost.py", "core/planner.py", "core/chains.py",
-                    "core/custom_tools.py", "scripts/advise.py"):
+                    "core/custom_tools.py"):
             tree = ast.parse(Path(_REF_ROOT, rel).read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)

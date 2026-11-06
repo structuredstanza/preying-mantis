@@ -102,7 +102,7 @@
       "type": "agent",
       "reasoning_effort": "high",
       "tools": ["run_sandbox", "run_sandbox_with_evidence", "get_findings", "get_threat_model", "read_file", "write_file", "get_function_boundary", "find_callers", "get_prior_poc", "record_regression_check"],
-      "on_enter_status": "static_confirmed",
+      "on_enter_status": "dynamic_confirmed",
       "output_schema": "ReproVerdict",
       "output_key": "verdict"
     },
@@ -116,13 +116,6 @@
       "type": "agent",
       "reasoning_effort": "high",
       "tools": ["read_file", "write_file", "get_findings", "get_threat_model", "record_exploit_chain"]
-    },
-    {
-      "id": "patcher",
-      "type": "agent",
-      "reasoning_effort": "high",
-      "tools": ["apply_patch", "run_sandbox", "run_sandbox_with_evidence", "read_file", "write_file", "get_findings", "get_security_guidance", "query_lineage", "find_symbol", "find_callers", "find_callees", "get_function_boundary"],
-      "on_enter_status": "dynamic_confirmed"
     },
     {
       "id": "calibrator",
@@ -164,8 +157,7 @@
     {"from": "reproducer", "to": "repro_classifier"},
     {"from": "repro_classifier", "to": "chainer", "on": "success"},
     {"from": "repro_classifier", "to": "calibrator", "on": "__DEFAULT__"},
-    {"from": "chainer", "to": "patcher"},
-    {"from": "patcher", "to": "calibrator"},
+    {"from": "chainer", "to": "calibrator"},
     {"from": "calibrator", "to": "reflector"},
     {"from": "reflector", "to": "reporter"}
   ]

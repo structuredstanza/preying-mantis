@@ -45,6 +45,7 @@ from scripts.configure import (
     ensure_configured,
     find_workflow_json,
     is_default_or_unconfigured,
+    merge_dicts,
     load_workflow_dict,
     run_preflight_checks,
 )
@@ -532,6 +533,10 @@ def run_launch(
                 probe_llm=probe_llm,
                 persist_overrides=save_config,
             )
+        elif overrides:
+            # Validate what a launch with these flags would use (see the main
+            # preflight below); in memory only.
+            cfg = merge_dicts(cfg, overrides)
         ok, messages = run_preflight_checks(cfg, target_path=str(target_path), probe_llm=probe_llm)
         if not ok:
             print("\n❌ Preflight Verification Failed:", file=sys.stderr)
@@ -542,6 +547,26 @@ def run_launch(
         for msg in messages:
             print(f"  {msg}")
         return 0
+
+    # Arguments before environment: a bad --import-knowledge or --path-root is
+    # reported as itself, not hidden behind a credential or sandbox preflight
+    # failure the operator would then chase instead -- and before synthesis
+    # spends anything.
+    if import_knowledge:
+        from core.knowledge import KnowledgeImportError, read_export_manifest
+
+        try:
+            read_export_manifest(import_knowledge)
+        except KnowledgeImportError as exc:
+            print(f"Error: --import-knowledge: {exc}", file=sys.stderr)
+            return 1
+    if path_root:
+        from core.paths import validate_path_root
+
+        _, path_root_err = validate_path_root(path_root, target_path)
+        if path_root_err:
+            print(f"Error: {path_root_err}", file=sys.stderr)
+            return 1
 
     # Research Graph Synthesis
     # Set here rather than inside the branch below: the pipeline call at the end of this
@@ -693,6 +718,7 @@ def run_launch(
 
     # Check unconfigured placeholders and auto-configure
     is_unconf, issues = is_default_or_unconfigured(cfg)
+    overrides_merged = False
     if is_unconf or interactive or (auto_configure and overrides):
         if interactive:
             from scripts.configure import run_interactive_wizard
@@ -706,6 +732,14 @@ def run_launch(
                 probe_llm=probe_llm,
                 persist_overrides=save_config,
             )
+            overrides_merged = True
+    # Preflight what the run will use. The run applies these CLI overrides
+    # whether or not auto-configure ran (--no-auto-configure, the wizard), so
+    # checking the bare workflow config validated a different model, endpoint
+    # or sandbox than the one about to be launched. In memory only: nothing is
+    # written back to the operator's workflow.
+    if overrides and not overrides_merged:
+        cfg = merge_dicts(cfg, overrides)
 
     # Preflight Check
     ok, messages = run_preflight_checks(cfg, target_path=str(target_path), probe_llm=probe_llm)

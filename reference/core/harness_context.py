@@ -83,7 +83,7 @@ _EXP_RE = re.compile(
 
 # The reflector's explicit "this run taught nothing citable" answer: the token
 # alone on a line, case-insensitive, tolerating the backticks or emphasis a
-# model tends to wrap a bare keyword in. `NO_ENTRY for the patcher` is prose,
+# model tends to wrap a bare keyword in. `NO_ENTRY for the reviewer` is prose,
 # not the token, and does not match.
 _NO_ENTRY_RE = re.compile(r"^\s*[`*_]*\s*NO_ENTRY\s*[`*_]*\s*\.?\s*$", re.IGNORECASE | re.MULTILINE)
 

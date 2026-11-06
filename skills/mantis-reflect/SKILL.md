@@ -123,7 +123,7 @@ read from state.
 
 Analyze the execution trajectories of all successfully executed subagents in the
 round (every stage that ran: history, summarize, architecture, threat-model,
-plan, researcher, dedupe, review, critic, reproduce, chain, patch, calibrate) to
+plan, researcher, dedupe, review, critic, reproduce, chain, calibrate) to
 distill what went right and what went wrong.
 
 Execute the reflection stage as follows:
@@ -159,8 +159,8 @@ Execute the reflection stage as follows:
      parameter, only to realize it was sanitized upstream in another file?
    - **Tool Failures:** Did the reproducer fail consistently because of a
      missing library in the sandbox?
-   - **Successful Strategies:** Did a patcher successfully fix a bug using a
-     specific idiomatic pattern that should be reused?
+   - **Successful Strategies:** Did a reproducer establish a sink reach with a
+     specific harness pattern that should be reused?
 
 3. **Append to the Inbox (`workspace/learnings.jsonl`):** For each distinct
    insight, append a structured JSON object to `workspace/learnings.jsonl`.

@@ -58,7 +58,7 @@ if str(_REF_ROOT) not in sys.path:
 
 # Finding statuses that still demand attention. Lowercased for comparison:
 # the database folds status casing at the door, but older rows may predate
-# that. patch_verified is deliberately absent -- a verified fix is closed.
+# that.
 OPEN_FINDING_STATUSES = {
     "reported",
     "confirmed",
@@ -345,69 +345,23 @@ def security_guidance(state: MantisState, filepath: str, full: bool = False) -> 
 
 # Operator resolutions. The operator owns the repository and the database;
 # withholding a closure tool would not remove the capability, only push it to
-# raw sqlite. What the tool preserves is label honesty: machine statuses
-# (patch_verified, dynamic_confirmed) stay reserved for the verification
+# raw sqlite. What the tool preserves is label honesty: the machine status
+# (dynamic_confirmed) stays reserved for the verification
 # pipeline, and the database's monotonic guard still refuses a dismissal
-# over machine-verified evidence.
-RESOLUTION_STATUSES = ("mitigated", "false_positive")
+# over machine-verified evidence. The logic lives in core/triage.py so the
+# local UI issues the same verdict through the same guard.
+from core.triage import RESOLUTION_STATUSES  # noqa: E402  (re-exported for callers)
 
 
 def resolve_finding(state: MantisState, finding_id: int, resolution: str,
                     reason: str) -> Dict[str, Any]:
     """Closes one finding with an operator verdict and an audit trail."""
-    res = str(resolution or "").strip().lower()
-    if res not in RESOLUTION_STATUSES:
-        return {"error": f"resolution must be one of {list(RESOLUTION_STATUSES)}: "
-                         "'mitigated' means the defect was fixed, "
-                         "'false_positive' means the report is wrong."}
-    if not str(reason or "").strip():
-        return {"error": "A non-empty reason is required: it is the audit "
-                         "trail for overriding the scanner."}
+    from core.triage import AUDIT_LOG_NAME, resolve_finding as _resolve
+
     if not state.db_exists():
         return {"error": "No findings database."}
-    try:
-        fid = int(finding_id)
-    except (TypeError, ValueError):
-        return {"error": f"finding_id must be an integer, got {finding_id!r}."}
-    from core.database import read_findings, update_finding_status_by_id
-
-    def row_for(i):
-        for f in read_findings(state.db_path):
-            if f.get("id") == i:
-                return f
-        return None
-
-    row = row_for(fid)
-    if row is None:
-        return {"error": f"No finding with id {fid}."}
-    old_status = str(row.get("status") or "")
-    update_finding_status_by_id(state.db_path, fid, str(row.get("run_id") or ""), res)
-    new_status = str((row_for(fid) or {}).get("status") or "")
-    applied = new_status.lower() == res
-    with state.open_log("resolutions.log") as fh:
-        fh.write(json.dumps({
-            "at": time.time(),
-            "finding_id": fid,
-            "lineage_id": row.get("lineage_id"),
-            "title": row.get("title"),
-            "old_status": old_status,
-            "new_status": new_status,
-            "resolution": res,
-            "reason": str(reason).strip(),
-        }) + "\n")
-    out = {"finding_id": fid, "old_status": old_status,
-           "new_status": new_status, "applied": applied}
-    if not applied:
-        if (res == "false_positive"
-                and old_status.lower() in ("dynamic_confirmed", "patch_verified")):
-            out["note"] = ("The monotonic status guard refused the transition: "
-                           "a dismissal never overwrites machine-verified "
-                           "evidence (dynamic_confirmed, patch_verified).")
-        else:
-            out["note"] = ("The monotonic status guard refused the transition: "
-                           f"'{old_status}' is already a terminal status and "
-                           "is preserved.")
-    return out
+    return _resolve(state.db_path, finding_id, resolution, reason,
+                    log_path=state.home / AUDIT_LOG_NAME)
 
 
 # --- The gate ---------------------------------------------------------------------
@@ -1013,10 +967,10 @@ def build_server(state: MantisState):
 
     @srv.tool()
     def mantis_resolve_finding(finding_id: int, resolution: str, reason: str) -> dict:
-        """Closes a finding with an operator verdict: 'mitigated' (the defect
-        was fixed) or 'false_positive' (the report is wrong). Requires a
+        """Closes a finding with an operator verdict: 'false_positive' (the
+        report is wrong). Requires a
         reason, which is appended to resolutions.log in the state directory as the audit
-        trail. Machine statuses (patch_verified, dynamic_confirmed) remain
+        trail. The machine status (dynamic_confirmed) remains
         reserved for the verification pipeline, and a dismissal never
         overwrites machine-verified evidence."""
         return resolve_finding(state, finding_id, resolution, reason)

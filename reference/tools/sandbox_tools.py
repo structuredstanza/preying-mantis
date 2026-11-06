@@ -160,7 +160,7 @@ def _is_non_repro_node(ctx) -> bool:
     if ctx is None:
         return False
     active = getattr(ctx, "active_node", "")
-    return bool(active and active not in ("reproducer", "patcher"))
+    return bool(active and active != "reproducer")
 
 
 def _note_dynamic_evidence(
@@ -176,7 +176,7 @@ def _note_dynamic_evidence(
     -----------------------------------------------------
     `ctx.sandbox_executed` is consumed downstream (main.py's status gate) as "dynamic
     evidence exists for this campaign": it is the sole thing standing between a
-    model-asserted `dynamic_confirmed` / `patch_verified` verdict and the knowledge
+    model-asserted `dynamic_confirmed` verdict and the knowledge
     base recording it as machine-verified. The flag used to be set by ANY command
     whose exit code was not 127 -- `echo hi` counted as dynamic execution -- which
     made the evidence tier a statement about shell availability, not about the
@@ -262,12 +262,8 @@ def _record_finding_evidence(
         entries = getattr(ctx, "finding_evidence", None)
         if entries is None:
             return
-        entry = entries.setdefault(key, {"reproduced": False, "reattacked": False,
-                                         "reattack_present": False, "sink_symbol": "", "reason": ""})
-        if getattr(ctx, "active_node", "") == "patcher":
-            entry["reattacked"] = True
-            entry["reattack_present"] = bool(evidence_present)
-        elif evidence_present:
+        entry = entries.setdefault(key, {"reproduced": False, "sink_symbol": "", "reason": ""})
+        if evidence_present:
             entry["reproduced"] = True
         if sink_symbol:
             entry["sink_symbol"] = str(sink_symbol)
@@ -542,8 +538,7 @@ async def run_sandbox_with_evidence(
 async def _keep_poc_scaffold(ctx, finding_id: int) -> List[str]:
     """Stores, against the finding, the files its PoC left in the guest's
     target tree (a harness built inside the module, a `_test.go` dropped
-    into the package): see core.poc_scaffold. Reproduction only -- in the
-    patcher evidence means the patch failed, and the tree holds the patch.
+    into the package): see core.poc_scaffold. Reproduction only.
     Returns the target-relative paths kept; never raises."""
     import os
     import sys
@@ -552,8 +547,6 @@ async def _keep_poc_scaffold(ctx, finding_id: int) -> List[str]:
         if ctx is None or ctx.sandbox is None or not ctx.db_path:
             return []
         if type(ctx.sandbox).__name__ in ("StaticOnlyEnvironment", "StaticOnlySandbox"):
-            return []
-        if getattr(ctx, "active_node", "") == "patcher":
             return []
         from core.database import record_artifact
         from core.poc_scaffold import capture_poc_scaffold
@@ -581,16 +574,3 @@ async def _keep_poc_scaffold(ctx, finding_id: int) -> List[str]:
         return []
 
 
-async def apply_patch(diff_content: str) -> str:
-    """Applies a specific code patch to the sandbox context. Code modifications only exist inside the sandbox."""
-    ctx = current_run_context.get()
-    if ctx is None or ctx.sandbox is None:
-        return "ERROR: No active sandbox environment (sandbox unavailable)."
-    try:
-        sandbox_type = type(ctx.sandbox).__name__
-        if sandbox_type in ("StaticOnlyEnvironment", "StaticOnlySandbox"):
-            return "ERROR: Patch application failed: dynamic sandbox is disabled in static-only mode."
-        res = await ctx.sandbox.apply_patch(diff_content)
-        return SecretScrubber.scrub(str(res))
-    except Exception as e:
-        return f"ERROR: Patch application failed: {SecretScrubber.scrub(str(e))}"

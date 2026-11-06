@@ -5,7 +5,6 @@ Each directory is one skill: a `SKILL.md` an agent loads on demand, with any
 
 | Skill                                                         | What it does                                                                                                                                               |
 | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`mantis-advise`](mantis-advise/SKILL.md)                     | Proactive security advisor and architectural remediation assistant for secure code development.                                                            |
 | [`mantis-architecture`](mantis-architecture/SKILL.md)         | Synthesizes raw learnings and codebase analysis into an interlinked Markdown Knowledge Base (KB).                                                          |
 | [`mantis-calibrate`](mantis-calibrate/SKILL.md)               | Calculates the final risk score based on empirical evidence and architectural impact.                                                                      |
 | [`mantis-chain`](mantis-chain/SKILL.md)                       | Analyzes individual security findings to identify and construct complex exploit chains.                                                                    |
@@ -13,7 +12,6 @@ Each directory is one skill: a `SKILL.md` an agent loads on demand, with any
 | [`mantis-dedupe`](mantis-dedupe/SKILL.md)                     | Consolidates raw security findings to eliminate redundant reports.                                                                                         |
 | [`mantis-history`](mantis-history/SKILL.md)                   | Analyzes the repository's version control system (VCS) history to extract past vulnerabilities, security fixes, and vulnerability patterns.                |
 | [`mantis-meta-agent`](mantis-meta-agent/SKILL.md)             | Acts as the persistent supervisor, launching and monitoring the automated review campaign.                                                                 |
-| [`mantis-patch`](mantis-patch/SKILL.md)                       | Generates minimal security fixes using transactional isolation (shadow directories or file backups), applies patches, and verifies them.                   |
 | [`mantis-pipeline-adapter`](mantis-pipeline-adapter/SKILL.md) | Interactively guides the design and implementation of custom deterministic orchestrator harnesses.                                                         |
 | [`mantis-plan`](mantis-plan/SKILL.md)                         | Formulates a targeted defensive security reviewing plan based on the active threat model and historical learnings.                                         |
 | [`mantis-reflect`](mantis-reflect/SKILL.md)                   | Extracts learnings from execution trajectories at the end of a Mantis loop.                                                                                |

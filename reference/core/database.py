@@ -112,7 +112,6 @@ ACTIVE_STATUSES = (
     "viable",
     "reproduced",
     "dynamic_confirmed",
-    "patch_verified",
 )
 FALSE_POSITIVE_STATUSES = (
     "false_positive",
@@ -136,12 +135,12 @@ SUPPRESSED_STATUSES = FALSE_POSITIVE_STATUSES + ("duplicate_merged", "reported",
 ARCHIVED_STATUS = "archived"
 
 # Statuses a re-reported finding can never be moved off by write_findings:
-# machine proof (dynamic_confirmed, patch_verified) and recorded closures
-# (dismissals, merges, mitigations). A later report restating the finding is
-# an opinion; only the harness's own stamps (update_status, merge_findings
-# within a run) may change these, under _terminal_clause_for.
+# machine proof (dynamic_confirmed) and recorded closures (dismissals,
+# merges). A later report restating the finding is an opinion; only the
+# harness's own stamps (update_status, merge_findings within a run) may
+# change these, under _terminal_clause_for.
 MONOTONIC_TERMINAL_STATUSES = frozenset({
-    "dynamic_confirmed", "patch_verified", "mitigated",
+    "dynamic_confirmed",
     "false_positive", "duplicate_merged", "non_viable", "sample_or_test",
 })
 
@@ -387,8 +386,6 @@ def init_db(db_path: str):
                 lineage_id TEXT,
                 cwe TEXT,
                 triage_reasoning TEXT,
-                patch_diff TEXT,
-                patch_status TEXT,
                 rca_summary TEXT,
                 embedding BLOB,
                 code_paths TEXT NOT NULL DEFAULT '[]',
@@ -935,23 +932,15 @@ def _ownership_clause(scope_path: Optional[str], campaign: Optional[str]) -> "tu
     return "(" + " OR ".join(parts) + ")", params
 
 
-def write_findings(db_path: str, filepath: str, findings: list, run_id: str = "", status: str = "",
-                   verified_evidence: Optional[bool] = None,
-                   finding_evidence: Optional[Dict[str, dict]] = None):
+def write_findings(db_path: str, filepath: str, findings: list, run_id: str = "", status: str = ""):
     """Write structured findings to the database contextually associated with their canonical filepaths, stable signatures, lineages, and RCA summaries.
 
-    `verified_evidence` is the harness's own record of whether this run has
-    reached-sink evidence (RunContext.sandbox_executed). When it is given and
-    False, a model-claimed patch_status of VERIFIED_SECURE is stored as
-    VERIFICATION_INCOMPLETE: both fields the old gate compared were filled in
-    by the same model, so a static-only run could export a "verified" patch.
-    None keeps the old behaviour for callers that have no run context.
-
-    `finding_evidence` is the same record per finding (RunContext
-    .finding_evidence). When it is non-empty, VERIFIED_SECURE additionally
-    requires THIS finding to have been reproduced and then re-attacked
-    without reaching the sink; a finding with no record of its own is
-    VERIFICATION_INCOMPLETE however the campaign as a whole fared.
+    Reached-sink evidence is not an input here. `dynamic_confirmed` is decided
+    after the reproducer by the completion stamp
+    (core.graph_loader.apply_completion_stamp), which reads
+    RunContext.finding_evidence and upgrades only the findings whose own PoC
+    reached a sink; that stamp is the gate, and this write path neither reads
+    nor enforces evidence.
     """
     with _db(db_path) as conn:
         cursor = conn.cursor()
@@ -1103,19 +1092,6 @@ def write_findings(db_path: str, filepath: str, findings: list, run_id: str = ""
                 )
 
             triage_reasoning = str(finding.get("reasoning") or finding.get("triage_reasoning") or finding.get("critic_reasoning") or "")
-            patch_diff = str(finding.get("patch_diff") or "")
-            patch_status = str(finding.get("patch_status") or "")
-            reattack_status = str(finding.get("reattack_status") or "")
-
-            # Deterministic INV-1/INV-2 Python Gate:
-            # VERIFIED_SECURE is strictly forbidden unless reattack_status is failed_to_bypass
-            if patch_status == "VERIFIED_SECURE" and reattack_status != "failed_to_bypass":
-                patch_status = "VERIFICATION_INCOMPLETE"
-            # ... and unless the harness itself saw the sandbox reach a sink
-            # this run. reattack_status is model-filled too; without this,
-            # the model's word was the only input to a "verified" badge.
-            if patch_status == "VERIFIED_SECURE" and verified_evidence is False:
-                patch_status = "VERIFICATION_INCOMPLETE"
 
             raw_code_paths = finding.get("code_paths")
             if raw_code_paths and isinstance(raw_code_paths, (list, tuple, set)):
@@ -1138,25 +1114,10 @@ def write_findings(db_path: str, filepath: str, findings: list, run_id: str = ""
                 # Case-folded: a legacy row dismissed as FALSE_POSITIVE must not be
                 # resurrected to `reported` just because its case predates the fold.
                 existing_status = (existing_row[1] or "").strip().lower()
-                if existing_status in ("dynamic_confirmed", "patch_verified") and finding_status in ("reported", "static_confirmed"):
+                if existing_status == "dynamic_confirmed" and finding_status in ("reported", "static_confirmed"):
                     finding_status = existing_status
                 elif existing_status in ("false_positive", "duplicate_merged", "non_viable", "sample_or_test") and finding_status in ("reported", "static_confirmed"):
                     finding_status = existing_status
-
-            # ... and, when the harness attributed evidence to findings, this
-            # finding's own: reproduced, then re-attacked without reaching
-            # the sink. The campaign bit above cannot tell one finding's
-            # re-attack from another's; one patched finding must not verify
-            # the rest. The id is the model's (scoped to this run below) or
-            # the row this report is updating.
-            if patch_status == "VERIFIED_SECURE" and finding_evidence:
-                own_id = explicit_id
-                if own_id is None and existing_row:
-                    own_id = existing_row[0]
-                own = finding_evidence.get(str(own_id)) if own_id is not None else None
-                if not (own and own.get("reproduced") and own.get("reattacked")
-                        and not own.get("reattack_present")):
-                    patch_status = "VERIFICATION_INCOMPLETE"
 
             # Check if updating an existing record by explicit ID or exact composite key
             target_id = matched_id_row[0] if matched_id_row else None
@@ -1180,29 +1141,22 @@ def write_findings(db_path: str, filepath: str, findings: list, run_id: str = ""
                 # and only fires for an incoming `reported`/`static_confirmed`;
                 # a re-report that matched by id or composite key with status
                 # FALSE_POSITIVE or VALID walked straight past it, so a model
-                # could demote a dynamic_confirmed finding (and blank its
-                # verified patch) or revive a dismissed one by restating it.
+                # could demote a dynamic_confirmed finding or revive a
+                # dismissed one by restating it.
                 # Machine proof and recorded dismissals both outrank a
                 # restatement; a dismissal is undone only by a stamp from a
                 # sandbox-backed node, never by a report.
-                cursor.execute(
-                    "SELECT status, patch_status, patch_diff FROM findings WHERE id = ?",
-                    (target_id,),
-                )
+                cursor.execute("SELECT status FROM findings WHERE id = ?", (target_id,))
                 prev = cursor.fetchone()
                 prev_status = str((prev[0] if prev else "") or "").strip().lower()
                 if prev_status in MONOTONIC_TERMINAL_STATUSES and finding_status != prev_status:
                     finding_status = prev_status
-                if prev and not patch_status:
-                    patch_status = str(prev[1] or "")
-                if prev and not patch_diff:
-                    patch_diff = str(prev[2] or "")
                 cursor.execute("""
                     UPDATE findings SET
                         filepath = ?, title = ?, severity = ?, description = ?, line_numbers = ?,
                         remediation = ?, status = ?, mantis_risk_score = ?, impact_score = ?, likelihood_score = ?,
-                        priority = ?, signature = ?, lineage_id = ?, cwe = ?, triage_reasoning = ?, patch_diff = ?,
-                        patch_status = ?, rca_summary = ?, code_paths = ?,
+                        priority = ?, signature = ?, lineage_id = ?, cwe = ?, triage_reasoning = ?,
+                        rca_summary = ?, code_paths = ?,
                         campaign = COALESCE(NULLIF(campaign, ''), ?)
                     WHERE id = ?
                 """, (
@@ -1221,8 +1175,6 @@ def write_findings(db_path: str, filepath: str, findings: list, run_id: str = ""
                     lineage_id,
                     canonical_cwe,
                     triage_reasoning,
-                    patch_diff,
-                    patch_status,
                     rca_summary,
                     code_paths_str,
                     owner or None,
@@ -1233,10 +1185,10 @@ def write_findings(db_path: str, filepath: str, findings: list, run_id: str = ""
                     INSERT OR REPLACE INTO findings (
                         run_id, filepath, title, severity, description, line_numbers,
                         remediation, status, mantis_risk_score, impact_score, likelihood_score,
-                        priority, signature, lineage_id, cwe, triage_reasoning, patch_diff, patch_status,
+                        priority, signature, lineage_id, cwe, triage_reasoning,
                         rca_summary, embedding, code_paths, campaign
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     run_id,
                     finding_filepath,
@@ -1254,8 +1206,6 @@ def write_findings(db_path: str, filepath: str, findings: list, run_id: str = ""
                     lineage_id,
                     canonical_cwe,
                     triage_reasoning,
-                    patch_diff,
-                    patch_status,
                     rca_summary,
                     None,
                     code_paths_str,
@@ -1291,21 +1241,21 @@ def _terminal_clause_for(status: str) -> str:
     update_finding_status_by_id so the two can never drift apart.
     """
     if status in ("reported", "static_confirmed"):
-        return "AND LOWER(status) NOT IN ('duplicate_merged', 'false_positive', 'non_viable', 'sample_or_test', 'mitigated', 'dynamic_confirmed', 'patch_verified')"
-    if status in ("dynamic_confirmed", "patch_verified"):
-        return "AND LOWER(status) NOT IN ('duplicate_merged', 'mitigated', 'patch_verified')"
+        return "AND LOWER(status) NOT IN ('duplicate_merged', 'false_positive', 'non_viable', 'sample_or_test', 'dynamic_confirmed')"
+    if status == "dynamic_confirmed":
+        return "AND LOWER(status) NOT IN ('duplicate_merged')"
     if status in ("false_positive", "non_viable", "sample_or_test"):
         # A dismissal is an OPINION. It never overwrites machine-verified
         # evidence: INV-5 pins that dynamic proof supersedes a false_positive
         # verdict, and the reverse direction would let one bad review erase
         # a reproduced vulnerability.
-        return "AND LOWER(status) NOT IN ('duplicate_merged', 'mitigated', 'dynamic_confirmed', 'patch_verified', 'false_positive', 'non_viable', 'sample_or_test')"
+        return "AND LOWER(status) NOT IN ('duplicate_merged', 'dynamic_confirmed', 'false_positive', 'non_viable', 'sample_or_test')"
     if status == "duplicate_merged":
         # A merge is bookkeeping by the deduplicator model. It may fold
         # unproven rows together; it may not fold away machine proof (the
-        # confirmed row is the one to keep) or reopen a recorded closure.
-        return "AND LOWER(status) NOT IN ('duplicate_merged', 'mitigated', 'dynamic_confirmed', 'patch_verified', 'false_positive', 'non_viable', 'sample_or_test')"
-    return "AND LOWER(status) NOT IN ('duplicate_merged', 'false_positive', 'non_viable', 'sample_or_test', 'mitigated')"
+        # confirmed row is the one to keep).
+        return "AND LOWER(status) NOT IN ('duplicate_merged', 'dynamic_confirmed', 'false_positive', 'non_viable', 'sample_or_test')"
+    return "AND LOWER(status) NOT IN ('duplicate_merged', 'false_positive', 'non_viable', 'sample_or_test')"
 
 
 def _campaign_scope_clause(norm_path: str) -> "tuple[str, List[str]]":
@@ -1436,7 +1386,7 @@ def update_status(db_path: str, filepath: str, run_id: str, status: str,
         """, (status, run_id, *scope_params, *id_params))
 
         # Upgrade OKF concepts trust tier on dynamic sandbox confirmation strictly for this specific resource
-        if status in ("dynamic_confirmed", "patch_verified") and norm_fp and not os.path.isdir(norm_fp):
+        if status == "dynamic_confirmed" and norm_fp and not os.path.isdir(norm_fp):
             from datetime import datetime, timezone
             now_iso = datetime.now(timezone.utc).isoformat()
             cursor.execute(
@@ -1629,29 +1579,24 @@ def prior_findings_touching(db_path: str, current_run_id: str, rel_paths: Sequen
     return out
 
 
-def mitigate_finding(db_path: str, finding_id: int, reason: str, by_run_id: str = "") -> bool:
-    """Closes an earlier finding as mitigated -- the defect was fixed -- the
-    way the MCP server's resolve_finding does, with the reason kept on the
-    row. Allowed over any open status including machine-confirmed ones:
-    fixing confirmed findings is the point. Returns whether the status
-    changed. Never raises."""
+def note_regression_fixed(db_path: str, finding_id: int, reason: str, by_run_id: str = "") -> bool:
+    """Records that a later run found an earlier finding's code path closed.
+
+    The finding is NOT closed: this tool reports vulnerabilities, it does not
+    adjudicate fixes. The note lands in `triage_reasoning` so the next reader
+    sees which run observed the path closed and why. Returns whether a note
+    was written. Never raises."""
     try:
         fid = int(finding_id)
     except (TypeError, ValueError):
         return False
     try:
         with _db(db_path) as conn:
-            row = conn.execute("SELECT run_id, status, triage_reasoning FROM findings WHERE id = ?", (fid,)).fetchone()
+            row = conn.execute("SELECT triage_reasoning FROM findings WHERE id = ?", (fid,)).fetchone()
             if row is None:
                 return False
-            prior_status = str(row[1] or "").lower()
-        update_finding_status_by_id(db_path, fid, str(row[0] or ""), "mitigated")
-        with _db(db_path) as conn:
-            now = str(conn.execute("SELECT status FROM findings WHERE id = ?", (fid,)).fetchone()[0] or "").lower()
-            if now != "mitigated" or prior_status == "mitigated":
-                return False
-            note = f"[mitigated by run {str(by_run_id)[:8] or 'later'}] {str(reason or '').strip()}"[:2000]
-            existing = str(row[2] or "")
+            note = f"[path closed at run {str(by_run_id)[:8] or 'later'}] {str(reason or '').strip()}"[:2000]
+            existing = str(row[0] or "")
             conn.execute("UPDATE findings SET triage_reasoning = ? WHERE id = ?",
                          ((existing + "\n" if existing else "") + note, fid))
         return True
@@ -2483,7 +2428,7 @@ def merge_findings(
     clause. The ids come from the deduplicator model, which also reads
     finding text the target wrote, so they are guessable integers an
     injected model can aim: unscoped, one call from run A merged a
-    patch_verified finding in run B, and the primary restore revived a row
+    dynamic_confirmed finding in run B, and the primary restore revived a row
     the operator had merged on purpose. A primary_id outside the run is
     ignored rather than trusted.
     """
@@ -2702,7 +2647,7 @@ def query_security_guidance(db_path: str, filepath: str, run_id: Optional[str] =
     """Aggregates active threat models, OKF concepts, historical vulnerabilities, triaged false positives,
     recurrent lineages, and verified remediation patterns into actionable security guidance for a target file.
     """
-    from core.llm_gateway import SecretScrubber, safe_markdown_fence, safe_markdown_inline, safe_markdown_span
+    from core.llm_gateway import SecretScrubber, safe_markdown_inline, safe_markdown_span
 
     with _db(db_path) as conn:
         cursor = conn.cursor()
@@ -2776,19 +2721,19 @@ def query_security_guidance(db_path: str, filepath: str, run_id: Optional[str] =
                     break
             threat_model_content = raw_tm.strip() if full else _compact_threat_model(raw_tm)
 
-        # 2. Confirmed & Active Vulnerabilities (with verified patches)
+        # 2. Confirmed & Active Vulnerabilities
         if norm_fp:
             query_confirmed = """
                 SELECT * FROM findings
                 WHERE filepath = ?
-                  AND status IN ('confirmed', 'viable', 'reproduced', 'dynamic_confirmed', 'static_confirmed', 'reported', 'patch_verified')
+                  AND status IN ('confirmed', 'viable', 'reproduced', 'dynamic_confirmed', 'static_confirmed', 'reported')
                 ORDER BY timestamp DESC, id DESC
             """
             cursor.execute(query_confirmed, (norm_fp,))
         else:
             query_confirmed = """
                 SELECT * FROM findings
-                WHERE status IN ('confirmed', 'viable', 'reproduced', 'dynamic_confirmed', 'static_confirmed', 'reported', 'patch_verified')
+                WHERE status IN ('confirmed', 'viable', 'reproduced', 'dynamic_confirmed', 'static_confirmed', 'reported')
                 ORDER BY timestamp DESC, id DESC
             """
             cursor.execute(query_confirmed)
@@ -2865,7 +2810,7 @@ def query_security_guidance(db_path: str, filepath: str, run_id: Optional[str] =
         trust_badge = "HEURISTIC"
         if any(c.get("trust_tier") == "human_reviewed" and not _is_agent_claimed_human(c) for c in scoped_okf):
             trust_badge = "HUMAN-REVIEWED"
-        elif any(c.get("trust_tier") == "machine_confirmed" for c in scoped_okf) or any(f.get("status") in ("patch_verified", "dynamic_confirmed", "reproduced") for f in confirmed_rows):
+        elif any(c.get("trust_tier") == "machine_confirmed" for c in scoped_okf) or any(f.get("status") in ("dynamic_confirmed", "reproduced") for f in confirmed_rows):
             trust_badge = "SANDBOX-CONFIRMED"
 
         # Build guidance summary
@@ -2943,16 +2888,6 @@ def query_security_guidance(db_path: str, filepath: str, run_id: Optional[str] =
                 guidance_lines.append(f"  - **Description**: {safe_markdown_span(c.get('description', ''))}")
                 if c.get("remediation"):
                     guidance_lines.append(f"  - **Remediation Invariant**: {safe_markdown_span(c.get('remediation'))}")
-                if c.get("patch_status"):
-                    guidance_lines.append(f"  - **Patch Status**: `{safe_markdown_span(c.get('patch_status'))}`")
-                if c.get("patch_diff"):
-                    diff_content = c.get("patch_diff", "").strip()
-                    if not full and diff_content.count("\n") > 12:
-                        diff_lines = diff_content.splitlines()[:12]
-                        diff_truncated = "\n".join(diff_lines) + "\n... (truncated; use --full to view entire patch diff)"
-                        guidance_lines.append(f"  - **Verified Patch Diff (Few-Shot Pattern)**:\n{safe_markdown_fence(diff_truncated, lang='diff')}")
-                    else:
-                        guidance_lines.append(f"  - **Verified Patch Diff (Few-Shot Pattern)**:\n{safe_markdown_fence(diff_content, lang='diff')}")
         elif not pattern_concepts:
             guidance_lines.append("No historical vulnerabilities recorded for this file.")
 

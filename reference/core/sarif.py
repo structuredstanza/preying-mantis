@@ -97,12 +97,6 @@ _DEFAULT_SEVERITY = ("warning", 4.0)
 
 # How much confidence the pipeline actually established, in plain words. SARIF has
 # no vocabulary for this, so it goes in the message where a human will see it.
-_VERIFICATION_NOTE = {
-    "VERIFIED_SECURE": "verified: the proposed patch withstood re-attack",
-    "MITIGATION_PROPOSED": "unverified: a patch is proposed but was not confirmed",
-    "VERIFICATION_INCOMPLETE": "unverified: verification did not complete",
-    "VERIFICATION_FAILED": "unverified: verification was attempted and failed",
-}
 
 
 class SarifExportError(ValueError):
@@ -213,16 +207,14 @@ def _message_text(finding: Dict[str, Any]) -> str:
     description = _MANTIS_NOTE_LOOKALIKE.sub("(", description)
 
     status = str(finding.get("status") or "").strip()
-    patch_status = str(finding.get("patch_status") or "").strip().upper()
-
-    # patch_status is trusted here because write_findings keeps
-    # VERIFIED_SECURE only when the harness itself recorded reached-sink
-    # evidence for the run (verified_evidence); the export adds no gate.
-    note = _VERIFICATION_NOTE.get(patch_status)
-    if note is None:
-        # No patch verification ran. Say so rather than staying silent: silence
-        # reads as confidence, and this is the most common case.
-        note = "unverified: no reproduction or patch verification is recorded"
+    # What a reader needs is whether anyone proved this reaches the sink.
+    # `dynamic_confirmed` is that proof; everything else is a reading of the
+    # code. This is the one distinction the whole pipeline exists to keep, and
+    # flattening it at the export would undo it at the last step.
+    if status.lower() == "dynamic_confirmed":
+        note = "verified: a proof-of-concept reached the sink"
+    else:
+        note = "unverified: no reproduction is recorded"
 
     parts = [title]
     if description:
@@ -321,7 +313,6 @@ def build_sarif(
             "properties": {
                 "security-severity": score,
                 "mantis-status": status or "unknown",
-                "mantis-patch-status": str(finding.get("patch_status") or "") or "none",
             },
         }
         fingerprints = _fingerprint(finding)

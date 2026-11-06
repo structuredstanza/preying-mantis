@@ -136,9 +136,9 @@ class GceEnvironment(BaseEnvironment):
     - SHIELDED VM: Secure Boot, vTPM, and Integrity Monitoring are enabled.
     - METADATA DEFENSE: disable-legacy-endpoints=TRUE and block-project-ssh-keys=TRUE.
     - CONFINED WORKSPACE: Target code is staged into guest /workspace; execution is jailed.
-    - STATEFUL LIFECYCLE: VM and filesystem state persist across execute() and apply_patch()
+    - STATEFUL LIFECYCLE: VM and filesystem state persist across execute()
       for the duration of a file/run, then cleanly deleted on close().
-    - ADK COMPLIANT: Implements execute(), read_file(), write_file(), list_files(), apply_patch(),
+    - ADK COMPLIANT: Implements execute(), read_file(), write_file(), list_files(),
       preflight(), initialize(), and close().
     """
 
@@ -654,34 +654,6 @@ class GceEnvironment(BaseEnvironment):
             return results
 
         return await asyncio.to_thread(_list)
-
-    async def apply_patch(self, diff: str) -> str:
-        """Applies a unified diff patch inside the guest VM workspace via stdin streaming without argv limits."""
-        await self._ensure()
-        guest_cmd = f"patch -p1 -d {shlex.quote(str(self._workdir))}"
-        ssh_args = [
-            "compute", "ssh", self.instance_name,
-            f"--project={self.project}",
-            f"--zone={self.zone}",
-        ]
-        if self.tunnel_through_iap:
-            ssh_args.append("--tunnel-through-iap")
-        ssh_args.extend(["--command", guest_cmd])
-
-        def _patch():
-            p = subprocess.run(
-                [self.gcloud_bin] + ssh_args,
-                input=diff,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                shell=False,
-            )
-            if p.returncode == 0:
-                return f"exit=0\n{p.stdout}"
-            return f"exit={p.returncode}\n{p.stderr}\n{p.stdout}"
-
-        return await asyncio.to_thread(_patch)
 
     def _delete_instance(self) -> None:
         delete_args = [

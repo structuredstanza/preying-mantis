@@ -192,6 +192,30 @@ def validate_scan_target(target: Union[str, Path]) -> tuple[Optional[Path], str]
     return resolved, ""
 
 
+def validate_path_root(path_root: str, target: Union[str, Path]) -> tuple[str, str]:
+    """Validates `--path-root`: the directory finding paths are anchored at.
+
+    A single-file scan knows only the file, so paths anchor at its parent and
+    the repository prefix is lost ("routes/login.ts" stored as "login.ts");
+    only the caller knows the enclosing repository. An anchor that is not an
+    ancestor of the target can never yield a relative path.
+
+    Returns ``(resolved_root, "")``, ``("", "")`` when no root was given (the
+    unrooted single-file behaviour), or ``("", error_message)``.
+    """
+    if not path_root:
+        return "", ""
+    root = os.path.realpath(os.path.expanduser(path_root))
+    tgt = os.path.realpath(str(target))
+    if os.path.isdir(root) and (tgt == root or tgt.startswith(root + os.sep)):
+        return root, ""
+    reason = "not a directory" if not os.path.isdir(root) else "not an ancestor directory of the target"
+    return "", strip_terminal_control(
+        f"--path-root '{path_root}' is {reason} (target resolves to {tgt}). Pass an "
+        "ancestor directory, or omit --path-root for unrooted single-file behaviour."
+    )
+
+
 def validate_data_path(
     path: Union[str, Path], anchor: Optional[Path] = None
 ) -> tuple[Optional[Path], str]:

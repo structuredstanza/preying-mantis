@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
@@ -3033,6 +3034,25 @@ def resolve_model_id(
     return normalize_model_id(raw_model)
 
 
+@functools.lru_cache(maxsize=1)
+def _adc_default_project() -> Optional[str]:
+    """The project Application Default Credentials name, or None.
+
+    Without ADC, google.auth probes the GCE metadata server with retries
+    (~12s here), and get_llm_kwargs runs once per node: an 18-node workflow
+    load spent minutes on probes before doing any work. Asked once per
+    process instead.
+    shortcut: ADC set up after the process started is not seen until restart;
+    clear with `_adc_default_project.cache_clear()` if a long-lived caller needs it.
+    """
+    try:
+        import google.auth
+        _, project = google.auth.default()
+    except Exception:
+        return None
+    return None if is_placeholder(project) else project
+
+
 def get_llm_kwargs(
     model_id: Optional[str] = None,
     default_model: str = DEFAULT_MODEL,
@@ -3105,13 +3125,7 @@ def get_llm_kwargs(
         location = os.environ.get("VERTEXAI_LOCATION") or os.environ.get("GOOGLE_CLOUD_LOCATION") or "global"
 
         if not project:
-            try:
-                import google.auth
-                _, project = google.auth.default()
-                if is_placeholder(project):
-                    project = None
-            except Exception:
-                pass
+            project = _adc_default_project()
 
         if not project and not resolved_api_base:
             raise ValueError("ERROR: You must set VERTEXAI_PROJECT or GOOGLE_CLOUD_PROJECT env variables.")

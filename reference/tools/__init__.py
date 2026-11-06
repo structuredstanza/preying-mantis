@@ -40,7 +40,6 @@ from .research_tools import (
 )
 from .sandbox_tools import (
     run_sandbox,
-    apply_patch,
     run_sandbox_with_evidence,
     check_reached_sink_evidence,
 )
@@ -72,7 +71,6 @@ TOOLS: dict[str, object] = {
     "dedupe_findings": dedupe_findings,
     "generate_report": generate_report,
     "run_sandbox": run_sandbox,
-    "apply_patch": apply_patch,
     "run_sandbox_with_evidence": run_sandbox_with_evidence,
     "get_security_guidance": get_security_guidance,
     "query_lineage": query_lineage,

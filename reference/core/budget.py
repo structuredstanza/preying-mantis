@@ -857,7 +857,6 @@ AUDIT_NODES = (
     "reviewer",
     "critic",
     "reproducer",
-    "patcher",
 )
 
 

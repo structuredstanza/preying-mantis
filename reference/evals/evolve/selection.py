@@ -17,8 +17,7 @@
 Harness2 picks among finals by a blind read of their deliverables, because a
 document task offers nothing firmer. A Mantis rollout does: every finding
 carries the INV-1 tier the pipeline itself established -- a sandbox sentinel
-(``dynamic_confirmed``), a re-attack (``patch_verified``), a static read, or
-a critic's dismissal. That is ground-truth-free, and it is hard to game with
+(``dynamic_confirmed``), a static read, or a critic's dismissal. That is ground-truth-free, and it is hard to game with
 prose. So selection here is:
 
 1. **Drop rules** (upstream's): a candidate that crashed, delivered nothing,

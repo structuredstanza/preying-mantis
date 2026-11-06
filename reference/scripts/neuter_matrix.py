@@ -77,11 +77,6 @@ SCENARIOS = {
          "    for candidate in [package_wf, parent_ref_wf]:",
          "    repo_ref_wf = os.path.join(os.getcwd(), \"reference\", \"workflow.json\")\n    for candidate in [repo_ref_wf, package_wf, parent_ref_wf]:"),
     ],
-    "revert_cwd_db_probe": [
-        ("scripts/advise.py",
-         "    ref_home = str(Path(__file__).resolve().parent.parent)",
-         "    candidates.extend([\n        os.path.join(os.getcwd(), \"workspace\", \"knowledge.db\"),\n        os.path.join(os.getcwd(), \"knowledge.db\"),\n    ])\n    ref_home = str(Path(__file__).resolve().parent.parent)"),
-    ],
 
     # ---- Round 3 Guards ----
     "r3_revert_gitdir_symlink_walk": [
@@ -106,9 +101,6 @@ SCENARIOS = {
         ("core/database.py",
          "    db_path = resolve_db_path(db_path)",
          "    pass  # NEUTERED"),
-        ("scripts/advise.py",
-         "    conn = _connect(resolve_db_path(db_path))",
-         "    conn = _connect(db_path)  # NEUTERED"),
     ],
     "r3_revert_okf_export_sanitizer": [
         ("core/database.py",
@@ -129,11 +121,6 @@ SCENARIOS = {
         ("core/llm_gateway.py",
          '            if isinstance(k, str) and k in _VERBATIM_EGRESS_FIELDS and isinstance(v, str):',
          '            if False:  # NEUTERED'),
-    ],
-    "r3_revert_single_line_span": [
-        ("scripts/advise.py",
-         "    clean_title = safe_markdown_span(str(f_dict.get('title', '')))",
-         "    clean_title = safe_markdown_inline(str(f_dict.get('title', '')))  # NEUTERED"),
     ],
 
     # ---- Round 4 Guards ----
@@ -161,11 +148,6 @@ SCENARIOS = {
         ("core/database.py",
          '                    if parsed:\n                        parsed["trust_tier"] = trust_tier\n                        record_okf_concept(db_path, run_id, parsed)\n                        record_artifact(\n                            db_path,\n                            run_id,\n                            parsed.get("type", "okf_concept"),\n                            rel_p,\n                            content,\n                            metadata={"trust_tier": trust_tier, "agent_authored": True},\n                        )',
          '                    if parsed:\n                        record_okf_concept(db_path, run_id, parsed)\n                        record_artifact(\n                            db_path,\n                            run_id,\n                            parsed.get("type", "okf_concept"),\n                            rel_p,\n                            content,\n                        )  # NEUTERED'),
-    ],
-    "r4_revert_db_chokepoint_probe": [
-        ("scripts/advise.py",
-         "            resolved = resolve_db_path(custom_path)\n            if os.path.exists(resolved):\n                return resolved",
-         "            if os.path.exists(custom_path):\n                return custom_path  # NEUTERED"),
     ],
     "r4_revert_multiline_sink_prefix": [
         ("core/llm_gateway.py",
@@ -445,8 +427,8 @@ SCENARIOS = {
     ],
     'status_revert_terminal_case_blindness': [
         ('core/database.py',
-         'return "AND LOWER(status) NOT IN (\'duplicate_merged\', \'false_positive\', \'non_viable\', \'sample_or_test\', \'mitigated\', \'dynamic_confirmed\', \'patch_verified\')"',
-         'return "AND status NOT IN (\'duplicate_merged\', \'false_positive\', \'non_viable\', \'sample_or_test\', \'mitigated\', \'dynamic_confirmed\', \'patch_verified\')"  # NEUTERED: an UPPERCASE dismissal is silently un-dismissed'),
+         'return "AND LOWER(status) NOT IN (\'duplicate_merged\', \'false_positive\', \'non_viable\', \'sample_or_test\', \'dynamic_confirmed\')"',
+         'return "AND status NOT IN (\'duplicate_merged\', \'false_positive\', \'non_viable\', \'sample_or_test\', \'dynamic_confirmed\')"  # NEUTERED: an UPPERCASE dismissal is silently un-dismissed'),
     ],
     'status_revert_dismissal_protection': [
         ('core/database.py',
@@ -908,8 +890,8 @@ SCENARIOS = {
     ],
     "memory_launders_unreviewed_claims": [
         ("core/memory.py",
-         "    \"patch_verified\",\n)",
-         "    \"patch_verified\",\n    \"reported\",  # NEUTERED: a guess becomes history\n)"),
+         "    \"static_confirmed\",\n)",
+         "    \"static_confirmed\",\n    \"reported\",  # NEUTERED: a guess becomes history\n)"),
     ],
     "memory_reads_as_verdict": [
         ("core/memory.py",

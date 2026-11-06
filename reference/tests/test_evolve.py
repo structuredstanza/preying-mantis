@@ -197,10 +197,13 @@ class SurfaceTest(unittest.TestCase):
 
         # Remove a stage: its (inherited, or upstream-stubbed) prompt file is ignored, not an error.
         # The removal must rewire the route that fed it; the loader has the final word on that.
+        # repro_classifier exists only to branch `success` to the chainer (its default already goes
+        # to the calibrator), so removing the chainer retires the classifier with it.
         wf2 = json.loads(tree["workflow.json"])
-        wf2["nodes"] = [n for n in wf2["nodes"] if n["id"] != "chainer"]
-        wf2["edges"] = [e for e in wf2["edges"] if "chainer" not in (e["from"], e["to"])]
-        wf2["edges"].append({"from": "repro_classifier", "to": "patcher", "on": "success"})
+        gone = {"chainer", "repro_classifier"}
+        wf2["nodes"] = [n for n in wf2["nodes"] if n["id"] not in gone]
+        wf2["edges"] = [e for e in wf2["edges"] if not gone & {e["from"], e["to"]}]
+        wf2["edges"].append({"from": "reproducer", "to": "calibrator"})
         removed = dict(tree); removed["workflow.json"] = json.dumps(wf2)
         S.validate_tree(removed, tree)                       # inherited prompts/chainer.md present
         removed["prompts/chainer.md"] = ""                   # upstream write_tree stubs always-on files as ""
@@ -327,10 +330,10 @@ class AdapterTest(unittest.TestCase):
             {"type": "tool_response", "node": "researcher", "name": "read_file", "text": "def f(): pass\n"},
             {"type": "tool_call", "node": "researcher", "name": "get_findings", "args": "{}"},
             {"type": "tool_response", "node": "researcher", "name": "get_findings", "text": "NO_DATA: Zero findings recorded in database."},
-            {"type": "tool_call", "node": "patcher", "name": "apply_patch", "args": "{'diff_content': '...'}"},
-            {"type": "tool_response", "node": "patcher", "name": "apply_patch", "text": "SANDBOX-ERROR: patch(1) unavailable in image 'x'"},
-            {"type": "tool_call", "node": "patcher", "name": "run_sandbox", "args": "{'command': 'ls'}"},
-            {"type": "tool_response", "node": "patcher", "name": "run_sandbox", "text": "exit=0\napp.py\n"},
+            {"type": "tool_call", "node": "reproducer", "name": "run_sandbox_with_evidence", "args": "{'command': 'python3 poc.py'}"},
+            {"type": "tool_response", "node": "reproducer", "name": "run_sandbox_with_evidence", "text": "SANDBOX-ERROR: image unavailable"},
+            {"type": "tool_call", "node": "reproducer", "name": "run_sandbox", "args": "{'command': 'ls'}"},
+            {"type": "tool_response", "node": "reproducer", "name": "run_sandbox", "text": "exit=0\napp.py\n"},
         ]
         digest = ad.render_digest(events, ad.render_trajectory(events, 20_000))
         row = next(r for r in digest.splitlines() if r.startswith("| researcher "))
@@ -339,8 +342,8 @@ class AdapterTest(unittest.TestCase):
         self.assertIn("get_findings×1 (✗1)", row)
         self.assertIn("read_file×1 |", row + " |")
         self.assertNotIn("read_file×1 (✗", row)
-        prow = next(r for r in digest.splitlines() if r.startswith("| patcher "))
-        self.assertIn("apply_patch×1 (✗1)", prow)
+        prow = next(r for r in digest.splitlines() if r.startswith("| reproducer "))
+        self.assertIn("run_sandbox_with_evidence×1 (✗1)", prow)
         self.assertNotIn("run_sandbox×1 (✗", prow)
         self.assertIn("✗n = n answered with an error/empty/unavailable", digest)
         self.assertTrue(ad.is_unproductive_response(""))

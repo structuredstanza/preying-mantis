@@ -317,7 +317,7 @@ _ARCHETYPE_BY_TAG = {
 # What to actually hunt in an area of each measured kind.
 #
 # This table is the specialization. Before it existed, the archetype was a label: the
-# three synthesis families differ by one researcher tool and two patcher tools, so a
+# three synthesis families differ by a single tool, so a
 # directory measured as `crypto_misuse_audit` and one measured as `sql_injection_audit`
 # received byte-identical instructions. The survey already distinguishes seventeen kinds
 # of area; everything downstream collapsed them into "look for bugs".
@@ -1429,7 +1429,7 @@ def render_focus_directive(astm: dict[str, Any], scan_target: str) -> str:
     This is the per-slice specialization. The survey distinguishes seventeen kinds of
     area; without this, a directory measured as a crypto implementation and one measured
     as a SQL layer were handed identical instructions, because the three synthesis
-    families differ only by one researcher tool and two patcher tools.
+    families differ only by a single tool.
 
     Returns "" when the target is not a slice of this map, or when its measured kind has
     no directive, so callers can append unconditionally.

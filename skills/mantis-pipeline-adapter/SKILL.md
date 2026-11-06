@@ -163,7 +163,6 @@ graph TD
         C[Critic]
         Rep[Reproducer]
         Ch[Chainer]
-        Pat[Patcher]
         Cal[Calibrator]
         Ref[Reflector]
     end
@@ -177,8 +176,6 @@ graph TD
     Harness --> C
     Harness --> Rep
     Harness --> Ch
-    Harness --> Pat
-    Pat -.->|Re-attack Bypass Loop| Rep
     Harness --> Cal
     Harness --> Ref
 
@@ -284,19 +281,16 @@ The pipeline can be split into independent services. When scaling horizontally
 
 - **Concurrency Control**: Implement database or file locking to ensure two
   workers do not attempt to process or update the same finding simultaneously.
-- **Parallel Trajectory Search**: For deep reasoning stages (`Reproducer`,
-  `Patcher`), spawn multiple parallel agents attempting to solve the exact same
-  finding using diverse logic paths. For the `Reproducer` stage, prune all other
-  trajectories as soon as one worker succeeds to save compute costs while
-  escaping LLM "give up" loops. For the `Patcher` stage, wait for all patches to
-  be generated and tested, then evaluate the successful ones to select the most
-  minimal, idiomatic, and correct fix.
+- **Parallel Trajectory Search**: For the deep reasoning `Reproducer` stage,
+  spawn multiple parallel agents attempting to solve the exact same finding
+  using diverse logic paths. Prune all other trajectories as soon as one worker
+  succeeds to save compute costs while escaping LLM "give up" loops.
 
 #### B. Heterogeneous LLM Selection (Multi-Model)
 
 Match task complexity with the appropriate model tier:
 
-- *Frontier Models*: For deep reasoning (Research, Reproduce, Patch).
+- *Frontier Models*: For deep reasoning (Research, Reproduce).
 - *Flash/Lite Models*: For structured utility tasks (Dedupe, Calibrate).
 - *Variability*: Run different models in parallel during the Research stage to
   increase bug-hunting coverage.
@@ -324,7 +318,7 @@ A custom orchestrator (a bespoke CLI, an ADK agent, an MCP-native pipeline, or
 any deterministic harness) does **not** inherit the living-project lifecycle
 that `mantis-meta-agent` implements. To support *continue-after-edits* and
 *opt-in boundary sync* **without producing silent wrong results** (false
-`VERIFIED_SECURE`, false `failed_to_reproduce`, dropped regressions), the
+`dynamic_confirmed`, false `failed_to_reproduce`, dropped regressions), the
 harness must implement the following harness-agnostic contract. This is the same
 contract recorded in [schema.json](../schema.json) under **Non-JSON Contracts**;
 the `Block A`–`Block G` and `SNAPSHOT_ID` references below name mechanisms each
@@ -362,9 +356,9 @@ PIN step and passes `--snapshot_root`/ `--snapshot_id` normally; Block A
 - **Store snapshots OUTSIDE `workspace/`.** The pinned copy (`SNAPSHOT_ROOT`)
   must live under `<state_root>/.mantis_snapshots/pass_<N>` (or a clean-VCS
   worktree/archive), and its path **must not** contain the segment `/workspace/`
-  — otherwise `mantis-patch`'s state-vs-code path guard misfires. Keep the last
-  2 snapshots and garbage-collect older ones with the matching teardown
-  (`rm -rf` for copies, `git worktree remove/prune` for worktrees).
+  — otherwise the state-vs-code path guard misfires. Keep the last 2 snapshots
+  and garbage-collect older ones with the matching teardown (`rm -rf` for
+  copies, `git worktree remove/prune` for worktrees).
 - **Non-destructive sync only.** Sync is the **first** action of a pass,
   **never** mid-pass, and must be **skipped** when the tree is dirty, ahead of
   upstream, detached, or has no upstream. The harness must **never** run
@@ -402,7 +396,7 @@ blocks and the global backward-compat rule in [schema.json](../schema.json)):
 
 | Label | Property                       | Enforced by                                   |
 | ----- | ------------------------------ | --------------------------------------------- |
-| INV-1 | No false `VERIFIED_SECURE`     | Block G + HALT ceiling                        |
+| INV-1 | No false `dynamic_confirmed`   | Block F + HALT ceiling                        |
 | INV-2 | No false `failed_to_reproduce` | Block F + HALT ceiling                        |
 | INV-3 | No dropped regression          | Block B NOT_MATCHED + POSSIBLE REGRESSION     |
 | INV-4 | Within-pass consistency        | Block A sentinel + single pinned snapshot     |
@@ -413,11 +407,11 @@ blocks and the global backward-compat rule in [schema.json](../schema.json)):
 
 | #   | Scenario                                                            | State                                        | Harness behavior                                                                                                                                                                           | Stage behavior                                                                                                                                                                                                      | Block / INV                             | Key fields                                                                                            |
 | --- | ------------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| 1   | Colocated state                                                     | PINNED                                       | HALT-and-yield (safe default), or relocate `state_root` outside `CODE_ROOT` when explicitly authorized (e.g. `--auto_relocate_state`); `SNAPSHOT_ROOT` path must not contain `/workspace/` | `mantis-patch` state-vs-code guard misfires; Block A step 3 confuses SNAPSHOT- vs STATE-relative paths                                                                                                              | A:3, D:3; INV-5                         | `active_snapshot.root`, `snapshot_root`, `state_root`                                                 |
+| 1   | Colocated state                                                     | PINNED                                       | HALT-and-yield (safe default), or relocate `state_root` outside `CODE_ROOT` when explicitly authorized (e.g. `--auto_relocate_state`); `SNAPSHOT_ROOT` path must not contain `/workspace/` | the state-vs-code guard misfires; Block A step 3 confuses SNAPSHOT- vs STATE-relative paths                                                                                                                         | A:3, D:3; INV-5                         | `active_snapshot.root`, `snapshot_root`, `state_root`                                                 |
 | 2   | Stale active_snapshot (`active_snapshot.pass != state.pass_number`) | PINNED → STOP or HALT-degrade                | Block D step 0: handles same-pass re-entry only; if dir missing → STOP, yield to user                                                                                                      | Block A step 2 sentinel may still MATCH (dir retained); CURRENT-PASS CHECK (`active_snapshot.pass == state.pass_number`) required: mismatch → STOP or HALT-degrade (Block B NOT_MATCHED, no authoritative verdicts) | A:2, D:0, B; INV-1, INV-3, INV-4, INV-6 | `active_snapshot.{root, snapshot_id, snapshot_pinned, pass}`, `state.pass_number`, `discovery_commit` |
-| 3   | Pin failure                                                         | HALT                                         | Block D step 2/4: skip copy on ENOSPC/error → step 5b; still write `active_snapshot` + pass roots                                                                                          | Authoritative verdicts forbidden; Block B always NOT_MATCHED; reproduce `not_attempted`; patch `VERIFICATION_INCOMPLETE`                                                                                            | D:2, D:4, D:5b; INV-1, INV-2, INV-6     | `active_snapshot.{snapshot_id, snapshot_pinned}`                                                      |
-| 4   | Patched shadows                                                     | PINNED (pass); `--snapshot_pinned=false` arg | Pass `--target_root=<PATCHED_SHADOW_ROOT>` + `--snapshot_pinned=false` to reattack sub-agent                                                                                               | Block A step 1a: `CODE_ROOT=--target_root` (authoritative); step 2 sentinel SKIPPED (sentinel-EXEMPT)                                                                                                               | A:1a, A:2; INV-4                        | `target_root`, `snapshot_pinned` (arg), `snapshot_root`, `discovery_commit`                           |
-| 5   | Different-snapshot duplicate candidates                             | PINNED                                       | No special action — both passes pinned correctly; dedupe handles it                                                                                                                        | Block B pairwise: `discovery_commit` differs → NOT_MATCHED → keep ACTIVE + `possible_duplicate_of`; POSSIBLE REGRESSION if archived was RESOLVED                                                                    | B; INV-3, INV-6                         | `discovery_commit`, `possible_duplicate_of`, `status`, `patch_status`                                 |
+| 3   | Pin failure                                                         | HALT                                         | Block D step 2/4: skip copy on ENOSPC/error → step 5b; still write `active_snapshot` + pass roots                                                                                          | Authoritative verdicts forbidden; Block B always NOT_MATCHED; reproduce `not_attempted`                                                                                                                             | D:2, D:4, D:5b; INV-1, INV-2, INV-6     | `active_snapshot.{snapshot_id, snapshot_pinned}`                                                      |
+| 4   | Pre-mutated tree (`--target_root`)                                  | PINNED (pass); `--snapshot_pinned=false` arg | Pass `--target_root=<SHADOW_ROOT>` + `--snapshot_pinned=false` to the reattack sub-agent                                                                                                   | Block A step 1a: `CODE_ROOT=--target_root` (authoritative); step 2 sentinel SKIPPED (sentinel-EXEMPT)                                                                                                               | A:1a, A:2; INV-4                        | `target_root`, `snapshot_pinned` (arg), `snapshot_root`, `discovery_commit`                           |
+| 5   | Different-snapshot duplicate candidates                             | PINNED                                       | No special action — both passes pinned correctly; dedupe handles it                                                                                                                        | Block B pairwise: `discovery_commit` differs → NOT_MATCHED → keep ACTIVE + `possible_duplicate_of`; POSSIBLE REGRESSION if archived was RESOLVED                                                                    | B; INV-3, INV-6                         | `discovery_commit`, `possible_duplicate_of`, `status`                                                 |
 | 6   | Absent sink evidence                                                | Any                                          | No special action — Block F is a stage-level mechanical gate                                                                                                                               | Block F: evidence absent (build error, exit 127, sink unreached) → `not_attempted` (retry-eligible), NEVER `failed_to_reproduce`; HALT ceiling additionally forces `not_attempted`                                  | F; INV-2, INV-6                         | `repro_status`, `reattack_status`, `repro_hints`                                                      |
 
 **Per-scenario detail:**
@@ -425,10 +419,10 @@ blocks and the global backward-compat rule in [schema.json](../schema.json)):
 **1. Colocated state** (`state_root` nested inside `CODE_ROOT` / snapshot root)
 — The pinned `SNAPSHOT_ROOT` must live under
 `<state_root>/.mantis_snapshots/pass_<N>` (or a clean-VCS worktree/archive), and
-its path **must not** contain the segment `/workspace/` — otherwise
-`mantis-patch`'s state-vs-code path guard misfires (state files appear to be
-"under `CODE_ROOT`"). If `state_root` itself is inside `CODE_ROOT`, the harness
-must HALT-and-yield (safe default) or, when explicitly authorized (e.g.
+its path **must not** contain the segment `/workspace/` — otherwise the
+state-vs-code path guard misfires (state files appear to be "under
+`CODE_ROOT`"). If `state_root` itself is inside `CODE_ROOT`, the harness must
+HALT-and-yield (safe default) or, when explicitly authorized (e.g.
 `--auto_relocate_state`), relocate it outside the snapshot before pinning. Block
 A step 3 distinguishes SNAPSHOT-RELATIVE path fields (read under `CODE_ROOT`)
 from STATE-RELATIVE fields (read under `state_root/workspace`, never prefixed
@@ -479,19 +473,18 @@ count/size within ~90%); on failure → step 5b (unpinned/HALT). Step 5b:
 `SNAPSHOT_ID="live:"+ISO8601`. The harness still writes `active_snapshot` and
 still passes `--snapshot_root`/`--snapshot_id` to stages so they see the HALT
 signal. Every stage then degrades conservatively: authoritative verdicts
-forbidden (`VERIFIED_SECURE`, `failed_to_reproduce`, `DUPLICATE`,
+forbidden (`dynamic_confirmed`, `failed_to_reproduce`, `DUPLICATE`,
 `FALSE_POSITIVE`, `NON_VIABLE`); Block B always returns NOT_MATCHED; reproduce
-records `not_attempted`; patch's best attainable is `VERIFICATION_INCOMPLETE`.
+records `not_attempted`.
 
-**4. Patched shadows** (`--target_root` pointing at a pre-mutated tree;
-sentinel-exempt path 1a in Block A) — `mantis-patch` passes
-`--target_root=<PATCHED_SHADOW_ROOT>` and `--snapshot_pinned=false` to the
-reproduce sub-agent for re-attack verification. Block A step 1a:
-`CODE_ROOT = --target_root` (authoritative override, overrides `--snapshot_root`
-and state fallback). Block A step 2: sentinel check SKIPPED (a `--target_root`
-tree is deliberately mutated and is sentinel-EXEMPT). The
-`--snapshot_pinned=false` argument is the sentinel-exemption, NOT a HALT signal
-— detect HALT by reading STATE (`active_snapshot.snapshot_id` starts with
+**4. Pre-mutated tree** (`--target_root` pointing at a pre-mutated tree;
+sentinel-exempt path 1a in Block A) — the caller passes
+`--target_root=<SHADOW_ROOT>` and `--snapshot_pinned=false` to the reproduce
+sub-agent. Block A step 1a: `CODE_ROOT = --target_root` (authoritative override,
+overrides `--snapshot_root` and state fallback). Block A step 2: sentinel check
+SKIPPED (a `--target_root` tree is deliberately mutated and is sentinel-EXEMPT).
+The `--snapshot_pinned=false` argument is the sentinel-exemption, NOT a HALT
+signal — detect HALT by reading STATE (`active_snapshot.snapshot_id` starts with
 `live:`, equivalently `active_snapshot.snapshot_pinned` is `false` in state),
 never from the argument passed on this invocation. The finding's
 `discovery_commit` is unaffected — it retains the pass-level `SNAPSHOT_ID` from
@@ -506,8 +499,7 @@ passes pinned correctly; the findings simply come from different snapshots.
 against the global `SNAPSHOT_ID`). If they differ → NOT_MATCHED. NOT_MATCHED
 keeps the current finding ACTIVE and sets `possible_duplicate_of` (a soft,
 non-terminal hint — the finding is NOT filtered or trashed). If the archived
-finding was RESOLVED (`patch_status` in {`VERIFIED_SECURE`,
-`MITIGATION_PROPOSED`} OR `status`==`FALSE_POSITIVE` OR
+finding was RESOLVED (`status`==`FALSE_POSITIVE` OR
 `production_viability`==`NON_VIABLE`) AND the pair is NOT_MATCHED → POSSIBLE
 REGRESSION: keep ACTIVE, add a history note, never filter (a reverted fix
 re-discovered on new code must never be trashed).
@@ -518,9 +510,9 @@ F: if EVIDENCE is ABSENT (any compiler/build nonzero exit, exit 127
 command-not-found, exit 2 "No such file", or the sink was never reached) →
 `repro_status = not_attempted` (retry-eligible), STOP. NEVER
 `failed_to_reproduce`. In `--reattack` mode: leave `reattack_status` UNSET with
-a history note "setup_failed" — NEVER `failed_to_bypass`. `failed_to_reproduce`
-is reserved for when the harness PROVABLY reached the vulnerable entrypoint —
-i.e. reached-sink evidence, not setup evidence — but the bug did not fire.
+a history note "setup_failed" — NEVER `isolated`. `failed_to_reproduce` is
+reserved for when the harness PROVABLY reached the vulnerable entrypoint — i.e.
+reached-sink evidence, not setup evidence — but the bug did not fire.
 Reached-sink evidence must originate INSIDE the invoked path or from
 target-produced tracing/backtraces: (a) a PoC script/source harness writes
 `MANTIS_REACHED_ENTRYPOINT` to a sidecar file at the point just before the sink
@@ -821,7 +813,7 @@ Two implementations are supported, sharing the same data contract:
 
 Both are **opt-in**. The existing skills are not modified. Seeded findings enter
 `workspace/findings/` alongside researcher findings and flow through the
-unchanged downstream gates (dedupe -> review -> critic -> reproduce -> patch ->
+unchanged downstream gates (dedupe -> review -> critic -> reproduce ->
 calibrate).
 
 A complete reference blueprint is available at
@@ -1010,11 +1002,11 @@ the gap: it re-grounds each finding against the pinned CODE_ROOT before stamping
 - **Purely additive.** Seeded findings are `PROVISIONALLY_VALID` /
   `NEEDS_RESEARCH` candidates. They must pass through the unchanged downstream
   gates: dedupe (Block B), review (13-rule filter), critic (viability),
-  reproduce (Block F reached-sink evidence + HALT ceiling), patch (Block G
-  re-attack), calibrate (sanity caps). No gate is weakened.
-- **No false `VERIFIED_SECURE`.** Seeded findings start at `PROVISIONALLY_VALID`
-  — they can never reach `VERIFIED_SECURE` without passing through the full
-  patch + re-attack pipeline.
+  reproduce (Block F reached-sink evidence + HALT ceiling), calibrate (sanity
+  caps). No gate is weakened.
+- **No false `dynamic_confirmed`.** Seeded findings start at
+  `PROVISIONALLY_VALID` — they can never reach `dynamic_confirmed` without a PoC
+  that reached the sink.
 - **No false `failed_to_reproduce`.** Seeded findings that reach reproduce are
   subject to the same Block F evidence gate and HALT ceiling.
 - **No dropped regression.** If a SAST-seeded finding matches an archived

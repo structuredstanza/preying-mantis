@@ -1,4 +1,4 @@
-# Sandbox image for the reproducer and patcher nodes.
+# Sandbox image for the reproducer node.
 # Built once by an operator — never by an agent.
 FROM python:3-slim
 

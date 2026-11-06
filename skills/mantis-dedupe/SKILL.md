@@ -127,8 +127,8 @@ Execute your task as follows:
    - Locate and load all archived finding JSON files from previous loop passes,
      if they exist, under `workspace/archive/findings_pass_*/*.json` and
      `workspace/archive/loop*_findings/*.json`. These files represent
-     vulnerabilities that have already been fully evaluated, triaged, and
-     potentially patched in previous passes.
+     vulnerabilities that have already been fully evaluated and triaged in
+     previous passes.
    - *Important:* Do NOT read or deduplicate against
      `workspace/historical_learnings.jsonl` (VCS history), as we want to catch
      regressions if old bugs were reintroduced.
@@ -215,10 +215,9 @@ Execute your task as follows:
    >   `possible_duplicate_of` is a non-terminal hint only.
 
    - **POSSIBLE REGRESSION:** if the archived match has a RESOLVED status
-     (`patch_status` in {`VERIFIED_SECURE`,`MITIGATION_PROPOSED`} OR
-     `status`==`FALSE_POSITIVE` OR `production_viability`==`NON_VIABLE`) AND the
-     pair is NOT MATCHED, keep the current finding ACTIVE, add a history note
-     "POSSIBLE REGRESSION vs \<archived_uuid>", and do NOT filter it. (A
+     (`status`==`FALSE_POSITIVE` OR `production_viability`==`NON_VIABLE`) AND
+     the pair is NOT MATCHED, keep the current finding ACTIVE, add a history
+     note "POSSIBLE REGRESSION vs \<archived_uuid>", and do NOT filter it. (A
      reverted fix re-discovered on new code must never be trashed.)
    - **EXACT-UUID retry exception (unchanged):** if the current finding has the
      EXACT SAME UUID as the archived one, it was intentionally copied back for a
@@ -340,11 +339,11 @@ Execute your task as follows:
         `"timestamp": "<current_iso8601_timestamp>"`).
       - **Unknown keys & provenance (MANDATORY):** The script MUST copy through
         EVERY key it does not explicitly handle (including `discovery_commit`,
-        `repro_snapshot_id`, `patch_base_snapshot`, `possible_duplicate_of`,
-        `signature`, `lineage_id`, `cwe`) from the primary finding onto the
-        merged object — never drop unknown fields. It MUST REFUSE to merge two
-        findings whose `discovery_commit` values differ (they describe different
-        code versions); leave them separate and log the refusal. When merging
+        `repro_snapshot_id`, `possible_duplicate_of`, `signature`, `lineage_id`,
+        `cwe`) from the primary finding onto the merged object — never drop
+        unknown fields. It MUST REFUSE to merge two findings whose
+        `discovery_commit` values differ (they describe different code
+        versions); leave them separate and log the refusal. When merging
         findings that all share one `discovery_commit`, preserve it unchanged.
    3. **Execute the Script:** Run your script to update the primary finding's
       file (`workspace/findings/<primary_id>.json`) on disk.

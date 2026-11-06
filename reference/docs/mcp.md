@@ -82,7 +82,7 @@ claude mcp add mantis -- /opt/mantis/reference/.venv/bin/python \
 | `mantis_find_callees`      | 1    | What this code reaches.                                                             |
 | `mantis_function_at`       | 1    | The innermost function enclosing file:line, with its exact extent.                  |
 | `mantis_get_findings`      | 1    | Recorded findings, filtered by file or status.                                      |
-| `mantis_resolve_finding`   | 1    | Operator closure: mark a finding `mitigated` or `false_positive`, with a reason.    |
+| `mantis_resolve_finding`   | 1    | Operator closure: mark a finding `false_positive`, with a reason.                   |
 | `mantis_security_guidance` | 1    | Threat-model-informed guidance for a file: active threats, invariants, history.     |
 
 ## The gate
@@ -134,20 +134,18 @@ git diff origin/main...HEAD | .venv/bin/python scripts/mcp_server.py --repo . --
 
 ## Closing findings
 
-`mantis_resolve_finding` is how a fixed or disputed finding stops gating:
+`mantis_resolve_finding` is how a disputed finding stops gating:
 
-- **`mitigated`** — the operator fixed the code. This closes any open finding,
-  including machine-confirmed ones: fixing confirmed findings is the point of
-  the loop.
 - **`false_positive`** — the operator disputes the finding. The database's
-  monotonic status guard refuses this over `dynamic_confirmed` or
-  `patch_verified`: a dismissal never erases machine evidence. The result
-  reports `applied: false` with the reason.
+  monotonic status guard refuses this over `dynamic_confirmed`: a dismissal
+  never erases machine evidence. The result reports `applied: false` with the
+  reason.
 
-Both require a non-empty `reason`, and every attempt is appended to
+A resolution requires a non-empty `reason`, and every attempt is appended to
 `resolutions.log` in the state directory for audit. Machine statuses
-(`static_confirmed`, `dynamic_confirmed`, `patch_verified`) are reserved for the
-pipeline — the server never lets an operator claim them.
+(`static_confirmed`, `dynamic_confirmed`) are reserved for the pipeline — the
+server never lets an operator claim them. Mantis reports defects; it does not
+adjudicate fixes, so there is no "mitigated" resolution.
 
 ## Scan lifecycle
 
@@ -169,7 +167,7 @@ files could cross-match).
 Everything lives in a per-repository directory **outside the repository**:
 `<workspace>/mcp/<hash of the repository path>/` by default, or a directory
 under `MANTIS_MCP_STATE_DIR`, or exactly `--state-dir`. It holds `knowledge.db`
-(the same schema every `main.py` run and `scripts/advise.py` query uses),
+(the same schema every `main.py` run writes and the MCP tools read),
 `knowledge.structural_index/` (the catalog), `scans/*.log` (pipeline output per
 background scan) and `resolutions.log` (the audit trail of
 `mantis_resolve_finding`). Scan registries are in-memory — a `scan_id` does not

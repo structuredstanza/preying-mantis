@@ -41,7 +41,7 @@ class MicrosandboxEnvironment(BaseEnvironment):
 
     - NETWORKLESS: Network.none() at creation; no egress, no DNS, no metadata endpoints.
     - FULLY CONFINED: The target code is copied into the guest VM filesystem (/workspace).
-    - STATEFUL PATCHING: A patch applied by apply_patch() is visible to later execute() calls.
+    - STATEFUL EXECUTION: State written by one execute() call is visible to later ones.
     - ADK COMPLIANT: Implements execute(), read_file(), write_file(), initialize(), close().
     """
 
@@ -246,38 +246,6 @@ class MicrosandboxEnvironment(BaseEnvironment):
                 rel = os.path.relpath(line, ".")
                 file_list.append(rel)
         return sorted(file_list)
-
-    async def apply_patch(self, diff: str) -> str:
-        from core.environments.patch_fallback import (
-            PATCH_FILE_NAME, PATCH_SCRIPT_NAME, PYTHON_PATCH_SCRIPT, fallback_command, unavailable_message,
-        )
-        try:
-            data = diff.encode("utf-8") if isinstance(diff, str) else diff
-            await self.write_file(Path(PATCH_FILE_NAME), data)
-            res = await self.execute(f"patch -p1 -i {PATCH_FILE_NAME} < /dev/null")
-            output_str = f"exit={res.exit_code}\n{res.stdout}{res.stderr}"
-            if res.exit_code == 127:
-                # No patch(1) in the image (python:3-slim, distroless): apply
-                # with the guest's python3 instead of failing the stage.
-                await self.write_file(Path(PATCH_SCRIPT_NAME), PYTHON_PATCH_SCRIPT)
-                fb = await self.execute(fallback_command(strip=1))
-                fb_out = f"exit={fb.exit_code}\n{fb.stdout}{fb.stderr}"
-                if fb.exit_code == 127:
-                    return unavailable_message(self.image, fb_out)
-                if fb.exit_code != 0:
-                    fb0 = await self.execute(fallback_command(strip=0))
-                    if fb0.exit_code == 0:
-                        return f"exit=0\n{fb0.stdout}{fb0.stderr}"
-                return fb_out
-            if res.exit_code != 0:
-                res_no_p1 = await self.execute(f"patch -i {PATCH_FILE_NAME} < /dev/null")
-                output_no_p1 = f"exit={res_no_p1.exit_code}\n{res_no_p1.stdout}{res_no_p1.stderr}"
-                if res_no_p1.exit_code == 127:
-                    return unavailable_message(self.image, output_no_p1)
-                return output_no_p1
-            return output_str
-        except Exception as e:
-            return f"SANDBOX-ERROR: {type(e).__name__}: {e}"
 
     async def preflight(self) -> None:
         from microsandbox import Image, ImageNotFoundError

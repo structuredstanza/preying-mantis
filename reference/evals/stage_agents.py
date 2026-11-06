@@ -80,11 +80,6 @@ STAGE_CONFIGS = {
         'tools': ['run_sandbox', 'run_sandbox_with_evidence', 'get_findings', 'get_threat_model', 'read_file', 'write_file', 'get_function_boundary', 'find_callers'],
         'instruction': 'You are the reproducer stage in the Mantis review pipeline. Execute exploit PoCs in the sandbox. Return ReproVerdict with route="success" if the exploit triggers, or route="failed_repro" if not.'
     },
-    'patcher': {
-        'skill': 'mantis-coder',
-        'tools': ['apply_patch', 'run_sandbox', 'read_file', 'write_file', 'get_findings'],
-        'instruction': 'You are the patcher stage in the Mantis review pipeline. Synthesize minimal unified diff patches using apply_patch and verify that PoC reattack is blocked (VERIFIED_SECURE).'
-    },
     'reflector': {
         'skill': 'mantis-reflect',
         'tools': ['read_file', 'write_file', 'get_findings', 'record_learning'],

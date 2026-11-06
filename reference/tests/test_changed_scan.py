@@ -697,7 +697,7 @@ class DirectiveReachesEveryNodeTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn(CAMPAIGN_DIRECTIVE_MARKER, joined, node)
             self.assertLess(joined.index(CAMPAIGN_CONTEXT_MARKER), joined.index(CAMPAIGN_DIRECTIVE_MARKER),
                             "data before instruction")
-        for node in ("history", "reproducer", "patcher", "calibrator", "reflector", "reporter"):
+        for node in ("history", "reproducer", "calibrator", "reflector", "reporter"):
             req = self._run_cb(node, ctx)
             joined = "".join(req.appended)
             self.assertNotIn(CAMPAIGN_CONTEXT_MARKER, joined, node)

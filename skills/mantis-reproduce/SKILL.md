@@ -20,25 +20,24 @@ inside isolated sandbox environments to empirically verify bugs.
 - **Description:** Generates and runs crash reproducers to verify security
   flaws.
 - **Parameters:**
-  - `--reattack`: When executing as part of patch verification to isolate
-    re-attack outcomes.
+  - `--reattack`: Variant hunting — does the defect class generalize beyond the
+    input that first triggered it? Records `reattack_status`; it verifies no fix
+    and gates no status.
   - `--finding_id`: The specific finding UUID to reproduce. **Must** be provided
     and is required when `--reattack` is specified.
   - `--force`: Override/bypass eligibility checks for targeted normal runs.
   - `--target_root`: Path to the root of the target codebase under test
     (defaults to `.`). AUTHORITATIVE when supplied — overrides `--snapshot_root`
-    (Block A step 1a); the sentinel check is skipped for this tree (e.g. a
-    patched shadow during re-attack verification).
+    (Block A step 1a); the sentinel check is skipped for this tree.
   - `--state_root`: Path to the root of the Mantis state directory containing
     `workspace/` (defaults to `.`).
   - `--snapshot_root`: Root of the pinned immutable code snapshot for this pass.
     Consumed by Block A (Step 0) when `--target_root` is not supplied.
   - `--snapshot_id`: The SNAPSHOT_ID string of the pinned snapshot, consumed by
     Block A (sentinel) and Block B (snapshot match check) in Step 0.
-  - `--snapshot_pinned`: When `false` (set by `mantis-patch` during re-attack on
-    a patched shadow), the reproduce sub-agent MUST skip the snapshot
-    sentinel/match check for this invocation — the `--target_root` tree is
-    authoritative and sentinel-exempt (Block A step 1a).
+  - `--snapshot_pinned`: When `false`, the reproduce sub-agent MUST skip the
+    snapshot sentinel/match check for this invocation — the `--target_root` tree
+    is authoritative and sentinel-exempt (Block A step 1a).
 
 ## Input/Output Contract
 
@@ -58,9 +57,7 @@ inside isolated sandbox environments to empirically verify bugs.
     `state_root/workspace/findings/` (sets `"reattack_status"`,
     `"reattack_file_path"`, `"reattack_run_command"`, `"reattack_output"`,
     `"reattack_variants"`, and appends history with stage `"reattack"`). Does
-    not modify `"repro_*"` fields or `"status"`. **Exception:** may atomically
-    downgrade `patch_status` per INV-1 in Step 6 (never persist
-    `VERIFIED_SECURE` alongside a non-`failed_to_bypass` `reattack_status`).
+    not modify `"repro_*"` fields or `"status"`.
   - Updates `state_root/workspace/archive/.repro_attempts.json` atomically.
   - Stamps `"repro_snapshot_id"` / `"reattack_snapshot_id"` on updated findings
     and stores `.repro_attempts.json` values as `{count,last_snapshot}` objects
@@ -76,10 +73,9 @@ inside isolated sandbox environments to empirically verify bugs.
     concurrency safety and retry stability.
   - Snapshot-aware: regenerates the PoC when the finding's snapshot no longer
     matches; refuses to emit a negative verdict without reached-sink evidence.
-    Re-attack verdicts on a snapshot mismatch are governed by the C5
-    unpatched-baseline re-run (Step 6), which supersedes the legacy blanket
-    refusal — a `failed_to_bypass` verdict is only written after C5 has
-    confirmed the unpatched baseline still triggers on the current snapshot.
+    Re-attack verdicts on a snapshot mismatch are governed by the baseline
+    re-run (Step 6) — an `isolated` verdict is only written after the original
+    PoC has been re-confirmed on the current snapshot.
 
 ## Instructions
 
@@ -93,7 +89,7 @@ LOCATOR RESOLUTION (before reading ANY target code or artifact):
 1. Determine CODE_ROOT, in this priority order:
    a. If --target_root is passed on THIS invocation, CODE_ROOT = --target_root.
       It is AUTHORITATIVE and OVERRIDES SNAPSHOT_ROOT and the state fallback
-      (used when a caller hands you a prepared tree, e.g. a patched shadow).
+      (used when a caller hands you a prepared tree).
    b. Else if --snapshot_root (or SNAPSHOT_ROOT) is passed, use it.
    c. Else read state_root/workspace/.mantis_state.json (state_root from
       --state_root if passed, else ./workspace/... relative to the current dir)
@@ -151,13 +147,13 @@ SNAPSHOT_ID already embeds the working-tree content hash, so within-pass finding
 MATCH and cross-pass bare-commit findings do not.)
 ```
 
-Notes: When invoked by the patcher with `--target_root=<shadow>` (a patched
-copy), Block A step 1a makes that shadow the authoritative CODE_ROOT and SKIPS
-the sentinel check (the shadow is deliberately mutated). Otherwise CODE_ROOT is
-the pinned snapshot and the sentinel MUST match. Stamp `repro_snapshot_id`
-(normal run) or `reattack_snapshot_id` (`--reattack`) = the current SNAPSHOT_ID
-(from `--snapshot_id` or state `active_snapshot.snapshot_id`) on every finding
-you update.
+Notes: When invoked with `--target_root=<shadow>`, Block A step 1a makes that
+shadow the authoritative CODE_ROOT and SKIPS the sentinel check (the shadow is
+deliberately mutated). Otherwise CODE_ROOT is the pinned snapshot and the
+sentinel MUST match. Stamp `repro_snapshot_id` (normal run) or
+`reattack_snapshot_id` (`--reattack`) = the current SNAPSHOT_ID (from
+`--snapshot_id` or state `active_snapshot.snapshot_id`) on every finding you
+update.
 
 Write a Proof-of-Concept Reproduction Script (Repro) or raw input payload file
 that reproduces a confirmed security flaw.
@@ -173,9 +169,6 @@ Execute the reproduction stage under these constraints:
        state** for the loaded finding:
        - The finding's `"status"` must be `"VALID"` or `"PROVISIONALLY_VALID"`.
        - The finding's `"repro_status"` must be `"reproduced"`.
-       - The finding's `"patch_status"` must NOT be `"MITIGATION_PROPOSED"`.
-         (`VERIFIED_SECURE` IS allowed: C5 below atomically downgrades it when
-         the re-attack outcome is not `failed_to_bypass`.)
        - Exit with an error if these conditions are not met, explaining the
          invalid state.
      - If `--reattack` is NOT specified (Targeted Normal Run):
@@ -277,7 +270,7 @@ Execute the reproduction stage under these constraints:
    instrumented build is available. **Sanitizer consistency guardrail:** the
    SAME sanitizer flags MUST be used for the baseline, attack, and re-attack
    runs — a different sanitizer can mask the bug and produce a false negative
-   (INV-2) or false `VERIFIED_SECURE` (INV-1). See Block G.
+   (INV-2). See Block G.
 
    **{TARGET_ROOT} token substitution (numbered step):**
 
@@ -381,9 +374,8 @@ hunting is the zero-infra-cost defense against them.
 
 **Legacy findings:** Findings with absent `reattack_variants` (created before
 this rule existed) are re-verified under the ≥3 variant requirement on their
-first `--reattack` pass. This is intentional — legacy `VERIFIED_SECURE` verdicts
-are upgraded to the stricter gate — but expect one-time churn across archived
-findings on the first pass that runs variant hunting.
+first `--reattack` pass. Expect one-time churn across archived findings on the
+first pass that runs variant hunting.
 
 **What to generate (bug-class-aware):**
 
@@ -419,22 +411,21 @@ findings on the first pass that runs variant hunting.
 
 **Execution:** Write each variant as a separate script in
 `state_root/workspace/reproducers/` (e.g., `reattack_variant_[uuid]_[N].py`).
-Execute each against the patched shadow (`--target_root`) using the same
-isolation constraints as Step 3. Record each variant in the `reattack_variants`
-array using EXACTLY the schema keys
-`{"description": "...", "triggered": true/false}` (Step 6).
+Execute each against the target tree (`--target_root`) using the same isolation
+constraints as Step 3. Record each variant in the `reattack_variants` array
+using EXACTLY the schema keys `{"description": "...", "triggered": true/false}`
+(Step 6).
 
-**Verdict rule:** `reattack_status = "failed_to_bypass"` requires a non-empty
+**Verdict rule:** `reattack_status = "isolated"` requires a non-empty
 `reattack_variants` array containing ≥ 3 valid variant inputs that ALL failed to
-trigger the bug on the patched shadow. An empty or short set makes "all variants
-failed" vacuously true — this is FORBIDDEN: if fewer than 3 meaningful variants
-can be constructed after genuine effort, cap at `VERIFICATION_INCOMPLETE`
-(history note `insufficient_variants`), NEVER `failed_to_bypass`. The `[]` case
-may ONLY coexist with a non-`failed_to_bypass` status (e.g., C5 baseline failure
-that halted before variant hunting).
+trigger the bug. An empty or short set makes "all variants failed" vacuously
+true — this is FORBIDDEN: if fewer than 3 meaningful variants can be constructed
+after genuine effort, record `"inconclusive_baseline_changed"` with the history
+note `insufficient_variants`, NEVER `"isolated"`. The `[]` case may ONLY coexist
+with `inconclusive_baseline_changed`.
 
-**Variant validity guardrail:** A variant counts as a bypass (`triggered = true`
-causing `bypassed_patch`) ONLY if it satisfies BOTH:
+**Variant validity guardrail:** A variant counts as a hit (`triggered = true`,
+causing `"generalizes"`) ONLY if it satisfies BOTH:
 
 1. **Same vulnerability class:** The variant reproduces the original bug class —
    same sink function / sanitizer signature / crash type. A junk mutant (e.g.,
@@ -444,23 +435,22 @@ causing `bypassed_patch`) ONLY if it satisfies BOTH:
    and continue. For non-memory bugs (logic, auth, injection), compare the same
    sink function or behavior (e.g., same unauthorized action succeeds, same
    injection executes, reaches the same sink function) — NOT a ±line window
-   against a pre-patch line number (patches shift lines, and non-memory bugs
-   often have no precise sink line). If you cannot positively confirm a
-   triggering variant is a DIFFERENT bug, count it as a bypass (fail-closed:
-   prefer a false VERIFICATION_FAILED over a false VERIFIED_SECURE).
+   against a stale line number (the tree moves between passes, and non-memory
+   bugs often have no precise sink line). If you cannot positively confirm a
+   triggering variant is a DIFFERENT bug, count it as a hit (fail-closed: prefer
+   "isolated" over claiming a defect generalizes).
 2. **Valid input per Step 4:** The variant must be a valid exercise of the
    public API or internal invariants — it must not rely on artificial harness
    tricks (e.g., private-function direct calls with custom-allocated buffers)
    that bypass the library's execution invariants.
 
-Ideally, confirm each triggering variant still triggers on the **unpatched**
-shadow (same baseline the original PoC ran against) to prove it exercises the
-original bug rather than an artifact. If the unpatched shadow is unavailable
-(e.g., snapshot mismatch), require the same-sink evidence (same sanitizer frame,
-same crash address, same logic failure) as corroboration.
+Confirm each triggering variant still triggers on the same baseline the original
+PoC ran against, to prove it exercises the original bug rather than an artifact.
+If that baseline is unavailable (e.g. snapshot mismatch), require the same-sink
+evidence (same sanitizer frame, same crash address, same logic failure) as
+corroboration.
 
-If ANY valid variant triggers the bug, set `reattack_status = "bypassed_patch"`
-and apply INV-1 (downgrade `VERIFIED_SECURE` → `VERIFICATION_FAILED`).
+If ANY valid variant triggers the bug, set `reattack_status = "generalizes"`.
 
 - **Reproduction Status Classification:**
 
@@ -493,7 +483,7 @@ and apply INV-1 (downgrade `VERIFIED_SECURE` → `VERIFICATION_FAILED`).
    class:
 
    Before classifying ANY negative outcome (`failed_to_reproduce`, or in
-   `--reattack` mode `failed_to_bypass`), apply this gate:
+   `--reattack` mode `isolated`), apply this gate:
 
    ```
    REACHED-SINK EVIDENCE GATE (mechanical):
@@ -518,31 +508,28 @@ and apply INV-1 (downgrade `VERIFIED_SECURE` → `VERIFICATION_FAILED`).
    DECISION GATE (gate the DECISION, not specific verdict strings):
      - Record repro_status = reproduced OR statically_confirmed ONLY if EVIDENCE is
        PRESENT. If ABSENT -> repro_status = not_attempted (retry-eligible), STOP.
-     - In patch verification, EVIDENCE is required on the UNPATCHED baseline (Block G),
-       NOT on the post-patch attack run (a correct patch legitimately stops the input
-       before the sink).
      - If NO evidence channel is achievable for this target, downgrade to
-       not_attempted / VERIFICATION_INCOMPLETE. NEVER synthesize the marker.
+       not_attempted. NEVER synthesize the marker.
    ```
 
    Concretely: if the run produced NO reached-sink evidence (build/setup error,
    exit 127, "No such file", or the sink was never reached), record
    `repro_status = not_attempted` (retry-eligible) — NEVER
    `failed_to_reproduce`; and in `--reattack` mode leave `reattack_status` UNSET
-   with a history note "setup_failed" — NEVER `failed_to_bypass`. Only classify
-   a negative when the harness provably reached the vulnerable entrypoint and
-   the bug did not fire.
+   with a history note "setup_failed" — NEVER `isolated`. Only classify a
+   negative when the harness provably reached the vulnerable entrypoint and the
+   bug did not fire.
 
    **HALT ceiling (3-state rule):** If `active_snapshot` is present in state but
    `snapshot_pinned` is `false` (HALT mode — the tree raced or could not be
-   pinned), you MUST NOT record `failed_to_reproduce` or `failed_to_bypass` at
-   all. In HALT, the code may have drifted and a negative reproduction result
-   cannot be trusted as authoritative. Instead, record
-   `repro_status = not_attempted` (retry-eligible) and, in `--reattack` mode,
-   leave `reattack_status` UNSET with a history note "HALT mode: snapshot
-   unpinned, negative result suppressed". This mirrors the authoritative-verdict
-   prohibition that applies to all stages in HALT. (In MODE-OFF — no
-   `active_snapshot` — classify negatives normally as today.)
+   pinned), you MUST NOT record `failed_to_reproduce` or `isolated` at all. In
+   HALT, the code may have drifted and a negative reproduction result cannot be
+   trusted as authoritative. Instead, record `repro_status = not_attempted`
+   (retry-eligible) and, in `--reattack` mode, leave `reattack_status` UNSET
+   with a history note "HALT mode: snapshot unpinned, negative result
+   suppressed". This mirrors the authoritative-verdict prohibition that applies
+   to all stages in HALT. (In MODE-OFF — no `active_snapshot` — classify
+   negatives normally as today.)
 
    - **Logic & Authorization Bugs:** A successful reproducer is a functional
      unit test or script that explicitly demonstrates the logic failure (e.g.,
@@ -685,132 +672,96 @@ and apply INV-1 (downgrade `VERIFIED_SECURE` → `VERIFICATION_FAILED`).
      ```
 
    - **If run with `--reattack`:** You must append or update the following on
-     the existing object (do not touch `repro_*` or `status`):
+     the existing object (do not touch `repro_*` or `status`). Variant hunting
+     answers one question: does this defect class generalize beyond the input
+     that first triggered it? It is reconnaissance for the report, not a fix
+     verification — this tool does not patch.
 
-     - `"reattack_status"` (`"bypassed_patch"`, `"failed_to_bypass"`,
-       `"inconclusive_baseline_changed"`).
+   - `"reattack_status"` (`"generalizes"`, `"isolated"`,
+     `"inconclusive_baseline_changed"`).
 
-     - `"bypassed_patch"`: The PoC bypassed the patch and triggered the bug. If
-       `patch_status` is `VERIFIED_SECURE`, atomically set
-       `patch_status = "VERIFICATION_FAILED"` in the same write (a bypass
-       defeats the patch). This is an explicit exception to "do not touch
-       status" and applies to both the C5 step-3 path and same-snapshot runs.
+   - `"generalizes"`: at least one valid variant input triggered the same bug.
+     Report it: a defect that generalizes is worth more in a submission than a
+     single-input curiosity.
 
-     - `"failed_to_bypass"`: The PoC was run but failed to bypass the patch. (No
-       downgrade needed — `failed_to_bypass` is the value the allOf gate
-       requires for `VERIFIED_SECURE`.)
+   - `"isolated"`: every valid variant failed to trigger. Requires a non-empty
+     `reattack_variants` array with ≥ 3 valid variant inputs (Step 3a). An empty
+     or short set makes "all failed" vacuously true — this is FORBIDDEN: record
+     `"inconclusive_baseline_changed"` instead and say why.
 
-     - `"inconclusive_baseline_changed"`: The unpatched baseline was re-run (see
-       C5 below) and the bug NO LONGER TRIGGERS on the current unpatched code.
-       Do NOT claim `failed_to_bypass`. If `patch_status` is `VERIFIED_SECURE`,
-       atomically set `patch_status = "VERIFICATION_INCOMPLETE"` in the same
-       write.
+   - `"inconclusive_baseline_changed"`: the original input no longer triggers on
+     the current snapshot, so no variant result means anything. Do NOT record
+     `"isolated"`. Populate `reattack_file_path`, `reattack_run_command`, and
+     `reattack_output` with the baseline re-run's details.
 
-     - **INV-1 (single source — the schema's `VERIFIED_SECURE` allOf gate):**
-       `VERIFIED_SECURE => reattack_status` must be `failed_to_bypass`, and
-       `failed_to_bypass` requires a non-empty `reattack_variants` array with ≥
-       3 valid variant inputs (Step 3a) that ALL failed to trigger the bug on
-       the patched shadow. An empty or short variant set makes "all failed"
-       vacuously true — this is FORBIDDEN: cap at `VERIFICATION_INCOMPLETE`
-       instead. Any other outcome MUST atomically downgrade `patch_status` in
-       the same write — `VERIFICATION_INCOMPLETE` for
-       `inconclusive_baseline_changed` or an insufficient variant set,
-       `VERIFICATION_FAILED` for `bypassed_patch`. Never persist
-       `VERIFIED_SECURE` alongside a non-`failed_to_bypass` `reattack_status`.
+   - **Snapshot-mismatch -> re-establish the baseline first:** When
+     `reattack_snapshot_id` != `repro_snapshot_id`, do NOT record a variant
+     verdict. Re-run the original PoC against a FRESH copy of the current
+     snapshot (a fresh `mktemp -d` copy of `active_snapshot.root`). If it does
+     not trigger, record `inconclusive_baseline_changed`. If it does, proceed
+     with variant hunting.
 
-     - **Snapshot-mismatch -> governed by C5 below:** When
-       `reattack_snapshot_id` != `repro_snapshot_id`, do NOT independently
-       record a verdict — follow C5, which re-establishes the unpatched baseline
-       on the CURRENT snapshot. If C5 cannot run, fall back to leaving
-       `reattack_status` UNSET with a `SNAPSHOT_MISMATCH` history note.
+     - **Sanitizer consistency:** the baseline re-run and every variant MUST use
+       the same sanitizer flags that made the original baseline trigger. If the
+       baseline triggered via UBSan (exit 0), recompiling a variant without
+       UBSan would mask the bug and produce a false negative (INV-2).
+     - **HALT-mode guardrail:** Detect HALT by the PASS's snapshot id in state
+       (`active_snapshot.snapshot_id` starts with `live:`). In HALT, leave
+       `reattack_status` UNSET with the HALT note.
 
-     - **C5 — Unpatched-baseline re-run (Phase 2):** Before running the attack
-       on the patched build, if `reattack_snapshot_id` != `repro_snapshot_id` (a
-       genuine snapshot change, NOT a HALT-mode `live:` tree), FIRST
-       re-establish the unpatched baseline:
+   - `"reattack_file_path"`
 
-       1. Run the reproducer against a FRESH UNPATCHED copy of the current
-          snapshot — a fresh `mktemp -d` copy of `active_snapshot.root`, NOT the
-          patched shadow. (This is the same unpatched baseline that
-          `mantis-patch` Block G step 1 runs; reproduce has no Block G.)
-       2. If the unpatched baseline does NOT trigger (evidence absent per Block
-          F): set `reattack_status = "inconclusive_baseline_changed"`, do NOT
-          proceed with the attack, do NOT claim `failed_to_bypass`. You MUST
-          still populate `reattack_file_path`, `reattack_run_command`, and
-          `reattack_output` with the baseline re-run's details. Apply INV-1
-          (downgrade `VERIFIED_SECURE` -> `VERIFICATION_INCOMPLETE`).
-       3. If the unpatched baseline DOES trigger: proceed with the attack
-          (`bypassed_patch` or `failed_to_bypass`). Apply INV-1 (downgrade
-          `VERIFIED_SECURE` -> `VERIFICATION_FAILED` if `bypassed_patch`).
+   - `"reattack_run_command"`
 
-       - **Sanitizer consistency:** the baseline re-run, attack, and re-attack
-         MUST use the same sanitizer flags that made the original baseline
-         trigger. If the baseline triggered via UBSan (exit 0), recompiling the
-         attack without UBSan would mask the bug and produce a false negative
-         (INV-2) or false `failed_to_bypass` (INV-1).
-       - **HALT-mode guardrail:** Detect HALT by the PASS's snapshot id in state
-         (`active_snapshot.snapshot_id` starts with `live:`), NOT the
-         `--snapshot_pinned=false` argument (that's only the sentinel-exemption
-         for the patched shadow). In HALT, skip C5 and follow the existing HALT
-         ceiling (leave `reattack_status` UNSET with the HALT note).
-       - This does NOT change the VERIFIED_SECURE gate — Block G still requires
-         the unpatched baseline to trigger.
+   - `"reattack_output"`
 
-     - `"reattack_file_path"`
-
-     - `"reattack_run_command"`
-
-     - `"reattack_output"`
-
-     - `"reattack_variants"`: An array of objects, one per variant input
-       attempted during Step 3a. Each object MUST contain EXACTLY the two
-       required keys `"description"` (string) and `"triggered"` (boolean). Do
-       NOT invent free-form or custom keys (such as `input`, `result`,
-       `bypassed`, `label`, `name`):
-
-       ```json
-       "reattack_variants": [
-         {
-           "description": "off-by-one: len=bound+1",
-           "triggered": false
-         },
-         {
-           "description": "alternate path via /api/v2/echo",
-           "triggered": false
-         },
-         {
-           "description": "boundary mutation: max INT_MAX",
-           "triggered": false
-         }
-       ]
-       ```
-
-       - `"description"`: What the variant does (e.g.,
-         `"off-by-one: len=bound+1"`, `"alternate path via /api/v2/echo"`).
-       - `"triggered"`: boolean — whether this variant triggered the original
-         vulnerability class on the patched shadow (per the variant validity
-         guardrail in Step 3a). Invalid/junk mutants that produced an unrelated
-         crash or error are recorded as `triggered = false` with a description
-         noting invalidity. `reattack_variants` MUST be non-empty (≥ 3 entries)
-         for `reattack_status = "failed_to_bypass"`. An empty array `[]` may
-         ONLY coexist with a non-`failed_to_bypass` status (e.g., C5 baseline
-         failure that halted before variant hunting, or
-         `inconclusive_baseline_changed`).
-
-     - `"reattack_snapshot_id"`: the current SNAPSHOT_ID this run executed
-       against.
-
-     - An entry to the `"history"` array:
+   - `"reattack_variants"`: An array of objects, one per variant input attempted
+     during Step 3a. Each object MUST contain EXACTLY the two required keys
+     `"description"` (string) and `"triggered"` (boolean). Do NOT invent
+     free-form or custom keys (such as `input`, `result`, `bypassed`, `label`,
+     `name`):
 
      ```json
-     {
-       "stage": "reattack",
-       "action": "reproduced",
-       "details": "Re-attack status evaluated as [bypassed_patch/failed_to_bypass] using command: [reattack_run_command]",
-       "pass_number": <current_pass_number>,
-       "timestamp": "<current_iso8601_timestamp>"
-     }
+     "reattack_variants": [
+       {
+         "description": "off-by-one: len=bound+1",
+         "triggered": false
+       },
+       {
+         "description": "alternate path via /api/v2/echo",
+         "triggered": false
+       },
+       {
+         "description": "boundary mutation: max INT_MAX",
+         "triggered": false
+       }
+     ]
      ```
+
+     - `"description"`: What the variant does (e.g.,
+       `"off-by-one: len=bound+1"`, `"alternate path via /api/v2/echo"`).
+     - `"triggered"`: boolean — whether this variant triggered the original
+       vulnerability class (per the variant validity guardrail in Step 3a).
+       Invalid/junk mutants that produced an unrelated crash or error are
+       recorded as `triggered = false` with a description noting invalidity.
+       `reattack_variants` MUST be non-empty (≥ 3 entries) for
+       `reattack_status = "isolated"`. An empty array `[]` may ONLY coexist with
+       `inconclusive_baseline_changed`.
+
+   - `"reattack_snapshot_id"`: the current SNAPSHOT_ID this run executed
+     against.
+
+   - An entry to the `"history"` array:
+
+   ```json
+   {
+     "stage": "reattack",
+     "action": "reproduced",
+     "details": "Re-attack status evaluated as [generalizes/isolated/inconclusive_baseline_changed] using command: [reattack_run_command]",
+     "pass_number": <current_pass_number>,
+     "timestamp": "<current_iso8601_timestamp>"
+   }
+   ```
 
 7. **Criticism of Reproduction Validity:** To ensure the reproduction is a valid
    example of reproducing the reported vulnerability, have a subagent with a

@@ -67,7 +67,6 @@ ANSWER_KEY_GLOBS = ("*ground_truth*.json", "*_dataset*.json")
 # ordering is what matters for selection, and a sandbox-proven reach is not
 # "a bit better" than a static read -- it is a different kind of evidence.
 EVIDENCE_WEIGHTS: Dict[str, float] = {
-    "patch_verified": 3.0,
     "dynamic_confirmed": 3.0,
     "reproduced": 2.0,
     "static_confirmed": 1.0,
@@ -80,8 +79,8 @@ DISMISSED_STATUSES = ("false_positive", "non_viable", "sample_or_test")
 # Anything a verdict stage upheld. The non-regression floor is built from these
 # (intersected over base runs), so a static-only workflow -- where nothing can
 # reach dynamic_confirmed -- still has a floor.
-CONFIRMED_STATUSES = ("static_confirmed", "confirmed", "viable", "reproduced", "dynamic_confirmed", "patch_verified")
-MACHINE_VERIFIED_STATUSES = ("dynamic_confirmed", "patch_verified", "reproduced")
+CONFIRMED_STATUSES = ("static_confirmed", "confirmed", "viable", "reproduced", "dynamic_confirmed")
+MACHINE_VERIFIED_STATUSES = ("dynamic_confirmed", "reproduced")
 DEFAULT_ROLLOUT_TIMEOUT_SECONDS = 3 * 3600
 
 _TOOL_CALL_RE = re.compile(r"^\[TOOL CALL: ([^\]]+)\] args=(.*)$")

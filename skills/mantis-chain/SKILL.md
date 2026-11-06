@@ -235,7 +235,7 @@ Execute the chaining stage as follows:
 3. **Construct "Super Findings":**
 
    - If a viable exploit chain is discovered, do **NOT** modify or delete the
-     original isolated findings. They still need to be patched individually.
+     original isolated findings. Each remains a defect in its own right.
    - **Idempotency check (run BEFORE minting a UUID):** Apply the Idempotency
      Guarantee above — scan current `workspace/findings/` AND
      `workspace/archive/findings_pass_*/` AND legacy

@@ -25,11 +25,6 @@ class BaseEnvironment(AdkBaseEnvironment):
     """Abstract base class extending ADK BaseEnvironment with patch management, lifecycle, and filesystem listing helpers."""
 
     @abc.abstractmethod
-    async def apply_patch(self, diff: str) -> str:
-        """Applies a unified diff patch to the isolated sandbox filesystem."""
-        pass
-
-    @abc.abstractmethod
     async def preflight(self) -> None:
         """Validates prerequisites (e.g. image availability, KVM access, container runtime)."""
         pass
@@ -106,10 +101,6 @@ class ProxyEnvironment(BaseEnvironment):
     async def list_files(self, directory: str = "") -> List[str]:
         env = self._get_active_env()
         return await env.list_files(directory)
-
-    async def apply_patch(self, diff: str) -> str:
-        env = self._get_active_env()
-        return await env.apply_patch(diff)
 
     async def preflight(self) -> None:
         env = self._get_active_env()

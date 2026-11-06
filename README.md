@@ -7,12 +7,12 @@
 > production systems, sensitive data, or internal networks.
 
 > [!IMPORTANT] **RESPONSIBLE USE** AI models are non-deterministic and can
-> hallucinate findings or generate incorrect patches. **All findings must be
-> manually verified by a security expert before being reported.** Do not
-> mass-file unverified, AI-generated reports to open-source maintainers. A
-> failure to automatically reproduce a vulnerability does not definitively mean
-> it is a false positive, nor does a successful reproducer guarantee the bug is
-> exploitable in all contexts. Use Mantis responsibly.
+> hallucinate findings. **All findings must be manually verified by a security
+> expert before being reported.** Do not mass-file unverified, AI-generated
+> reports to open-source maintainers. A failure to automatically reproduce a
+> vulnerability does not definitively mean it is a false positive, nor does a
+> successful reproducer guarantee the bug is exploitable in all contexts. Use
+> Mantis responsibly.
 
 > [!WARNING] **The pull request scan is untested.** The GitHub Action in
 > `action/`, the `mantis-pr-scan` and `mantis-knowledge-refresh` workflows under
@@ -27,7 +27,7 @@ Mantis is a set of skills along with an ADK reference harness for building
 secure software in the new AI era of software development.
 
 - [`skills/`](skills/) -- the method: the skills an agent loads on demand, from
-  threat modelling through research, review, patching and reporting.
+  threat modelling through research, review, reproduction and reporting.
 - [`reference/`](reference/) -- an ADK harness that runs the method as a
   pipeline, with its own two skills to configure and launch it. Meant to be
   adapted; works as is.
@@ -102,17 +102,11 @@ Mantis is roughly designed to:
   environments, anywhere from a static guess at what an exploit might look up up
   to a unit test or even spinning up a mock server to attempt to exploit
 - Look across known vulnerabilities to attempt to build more impactful chains
-- Patch discovered vulnerabilities, using an adversarial loop to verify the
-  vulnerability is really fixed
 - Calibrate all findings based on an established rubric to combat LLM inflation
   of severity (surfacing the most critical risks to humans instead of spewing
   thousands of "criticals")
 - Reflect on each iteration of the loop to look for things we've learned in the
   now completed round of research
-- Based on all of the collected learnings, threat model, and knowledge base, use
-  the `/mantis-advise` skill to develop code more securely and ensure that
-  during development you do not repeat prior mistakes or trigger edge cases in
-  code that were previously protected by some guard that was removed
 
 Additionally, the ADK reference harness shows some of the neat ways in which we
 can build agentic workflows. Specifically, `reference/workflow.json` shows how a

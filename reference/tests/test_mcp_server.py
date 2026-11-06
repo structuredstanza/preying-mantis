@@ -301,7 +301,7 @@ class TestGateVerdicts(unittest.TestCase):
 
     def test_closed_findings_do_not_gate(self):
         self._write_finding("CRITICAL", status="false_positive")
-        self._write_finding("HIGH", status="patch_verified")
+        self._write_finding("HIGH", status="duplicate_merged")
         out = mcp_server.check_change(self.state, diff=DIFF_IN_HELPER)
         self.assertEqual(out["verdict"], "PASS", out["reasons"])
 
@@ -363,18 +363,18 @@ class TestGateVerdicts(unittest.TestCase):
         self.assertIn("caller_radius",
                       {f["relationship"] for f in out["findings"]})
 
-    def test_resolve_mitigated_closes_the_loop(self):
+    def test_resolve_false_positive_closes_the_loop(self):
         self._write_finding("HIGH")
         out = mcp_server.check_change(self.state, diff=DIFF_IN_HELPER)
         self.assertEqual(out["verdict"], "BLOCK")
         fid = out["findings"][0]["id"]
         res = mcp_server.resolve_finding(
-            self.state, fid, "mitigated", "parameterized the query")
+            self.state, fid, "false_positive", "guarded by the fronting proxy")
         self.assertTrue(res["applied"], res)
         out = mcp_server.check_change(self.state, diff=DIFF_IN_HELPER)
         self.assertEqual(out["verdict"], "PASS", out["reasons"])
         audit = (self.state.home / "resolutions.log").read_text(encoding="utf-8")
-        self.assertIn("parameterized the query", audit)
+        self.assertIn("guarded by the fronting proxy", audit)
 
     def test_dismissal_cannot_erase_machine_evidence(self):
         self._write_finding("HIGH", status="dynamic_confirmed")
@@ -384,35 +384,38 @@ class TestGateVerdicts(unittest.TestCase):
         self.assertFalse(res["applied"], res)
         self.assertEqual(res["new_status"].lower(), "dynamic_confirmed")
         self.assertIn("machine-verified", res["note"])
-        # A fix is not a dismissal: mitigated IS allowed over machine proof.
-        res = mcp_server.resolve_finding(
-            self.state, fid, "mitigated", "fixed and deployed")
-        self.assertTrue(res["applied"], res)
+        # Mitigation is not an operator verdict this tool offers.
+        self.assertIn("error", mcp_server.resolve_finding(
+            self.state, fid, "mitigated", "fixed and deployed"))
 
-    def test_terminal_refusal_note_names_the_status_not_the_machine(self):
-        """Re-closing an already-dismissed finding is refused because the
-        row is terminal -- the note must say that, not blame machine
-        evidence that was never there."""
+    def test_re_dismissing_is_idempotent_and_audited(self):
+        """There is one operator verdict, so re-issuing it cannot conflict.
+
+        The audit log keeps every attempt: an operator restating a dismissal is
+        a fact about the review, not a no-op to swallow.
+        """
         self._write_finding("HIGH")
         fid = mcp_server.get_findings(self.state)["findings"][0]["id"]
         self.assertTrue(mcp_server.resolve_finding(
             self.state, fid, "false_positive", "wrong file entirely")["applied"])
         res = mcp_server.resolve_finding(
-            self.state, fid, "mitigated", "changed my mind, I fixed it")
-        self.assertFalse(res["applied"], res)
-        self.assertIn("false_positive", res["note"])
-        self.assertNotIn("machine-verified", res["note"])
+            self.state, fid, "false_positive", "confirmed, still wrong")
+        self.assertTrue(res["applied"], res)
+        self.assertEqual(res["new_status"], "false_positive")
+        audit = (self.state.home / "resolutions.log").read_text(encoding="utf-8")
+        self.assertEqual(audit.count('"finding_id": 1'), 2)
+        self.assertIn("confirmed, still wrong", audit)
 
     def test_resolve_rejects_dishonest_or_empty_input(self):
         self._write_finding("HIGH")
         fid = mcp_server.get_findings(self.state)["findings"][0]["id"]
         # Machine labels are not available to the operator surface.
         self.assertIn("error", mcp_server.resolve_finding(
-            self.state, fid, "patch_verified", "trust me"))
+            self.state, fid, "dynamic_confirmed", "trust me"))
         self.assertIn("error", mcp_server.resolve_finding(
-            self.state, fid, "mitigated", "   "))
+            self.state, fid, "false_positive", "   "))
         self.assertIn("error", mcp_server.resolve_finding(
-            self.state, 99999, "mitigated", "no such finding"))
+            self.state, 99999, "false_positive", "no such finding"))
 
 
 class TestPathContainment(unittest.TestCase):

@@ -16,7 +16,7 @@
 """Validates that all fenced bash commands in skill files use anchored paths.
 
 Prevents agents operating within audited repositories from executing
-unanchored repo-relative scripts like `python3 reference/scripts/advise.py`
+unanchored repo-relative scripts like `python3 reference/scripts/launch.py`
 or `./reference/run.sh`.
 """
 

@@ -463,7 +463,7 @@ class FindingFilepathValidationTests(unittest.TestCase):
         finally:
             current_run_context.reset(tok)
 
-    def test_end_to_end_pipeline_file_by_file_with_duplicate_merge_and_advise(self):
+    def test_end_to_end_pipeline_file_by_file_with_duplicate_merge(self):
         """End-to-end main.pipeline('file-by-file') across same-named nested files
         where researcher and deduplicator cite 'workspace/<name>' and merge duplicates."""
         import asyncio
@@ -472,7 +472,6 @@ class FindingFilepathValidationTests(unittest.TestCase):
         from google.adk.models import BaseLlm, LlmResponse
         from google.genai import types
         import main as mantis_main
-        from scripts.advise import query_remediation_standalone
 
         rel_vuln = "xxx/aaa/bbb/ccc/files/db_container_pipe_processor.sh"
         rel_clean = "yyy/files/db_container_pipe_processor.sh"
@@ -644,10 +643,6 @@ class FindingFilepathValidationTests(unittest.TestCase):
         self.assertEqual(by_id[2]["status"], "duplicate_merged")
         for r in all_rows:
             self.assertFalse(r["filepath"].startswith("workspace/"), r)
-
-        dossier = query_remediation_standalone(self.db_path, "1")
-        self.assertIn(f"`{rel_vuln}`", dossier["remediation_summary"])
-        self.assertNotIn("workspace/db_container_pipe_processor.sh", dossier["remediation_summary"])
 
 
 if __name__ == "__main__":

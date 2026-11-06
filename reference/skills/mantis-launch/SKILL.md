@@ -12,8 +12,8 @@ description: >-
 
 Autonomous Security Review Pipeline Launcher. Initiates end-to-end vulnerability
 discovery, independent verification, exploit viability analysis, crash
-reproduction, automated patch generation, and risk calibration campaigns across
-a target file or entire codebase repository.
+reproduction, and risk calibration campaigns across a target file or entire
+codebase repository.
 
 Automatically detects unconfigured environment placeholders (such as
 `YOUR_PROJECT_ID` in GCE sandboxes), auto-resolves active credentials and
@@ -131,12 +131,10 @@ python3 "$MANTIS_HOME/reference/scripts/launch.py" . --preflight-only
 ### 6. Inspect Results After Launch
 
 All findings, regression verification checks (`regression_checks`), exploit
-reproduction logs, verified patches, and risk calibration scores are recorded in
-`knowledge.db`. Query guidance using `mantis-advise`:
-
-```bash
-python3 "$MANTIS_HOME/reference/scripts/advise.py" --file src/server/auth.py
-```
+reproduction logs, and risk calibration scores are recorded in `knowledge.db`.
+Query that guidance with the MCP sidecar's `mantis_security_guidance` tool (see
+`reference/docs/mcp.md`), or from inside a pipeline node with the
+`get_security_guidance` tool.
 
 ## Input/Output Contract
 
